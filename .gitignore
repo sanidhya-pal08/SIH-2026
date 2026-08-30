@@ -1,0 +1,54 @@
+# ─── Python ───────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg-info/
+*.egg
+dist/
+build/
+*.whl
+
+# ─── Virtual Environments ─────────────────────────────────
+venv/
+env/
+.venv/
+.env/
+ENV/
+
+# ─── SQLite Databases ─────────────────────────────────────
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
+data/
+!test_router.db
+
+# ─── Environment Variables & Secrets ──────────────────────
+.env
+.env.*
+
+# ─── IDE & Editor ─────────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# ─── OS ───────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# ─── Docker ───────────────────────────────────────────────
+docker-compose.override.yml
+
+# ─── Test & Debug Artifacts ───────────────────────────────
+test_payload.json
+test_bridge_failure.json
+test_wait_reroute.json
+test_regression.py
+
+*.db
+.agent/

@@ -1,0 +1,9 @@
+services:
+  gis-engine:
+    build: .
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./data:/app/data
+    environment:
+      - SQLITE_DB_PATH=/app/data/router.db
