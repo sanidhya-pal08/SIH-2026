@@ -1,6 +1,6 @@
 import uuid
 from datetime import datetime
-from sqlalchemy import Column, String, Integer, Float, ForeignKey, DateTime, JSON
+from sqlalchemy import Column, String, Integer, Float, ForeignKey, DateTime, JSON, Boolean
 from sqlalchemy.dialects.postgresql import UUID
 from geoalchemy2 import Geometry
 from .database import Base
@@ -8,19 +8,31 @@ from .database import Base
 class User(Base):
     __tablename__ = "users"
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    name = Column(String(255), nullable=False)
+    name = Column(String(100), nullable=False)
     role = Column(String(50), nullable=False)
-    hashed_password = Column(String(255), nullable=False)
     district = Column(String(100))
-    phone_number = Column(String(20), unique=True)
+    email = Column(String(100), unique=True, nullable=False, index=True)
+    hashed_password = Column(String(255), nullable=False)
     created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
 
 class RoadSegment(Base):
     __tablename__ = "road_segments"
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     name = Column(String(255))
+    source_id = Column(UUID(as_uuid=True), ForeignKey('villages.id'))
+    target_id = Column(UUID(as_uuid=True), ForeignKey('villages.id'))
     geom = Column(Geometry('LINESTRING', srid=4326))
-    accessibility_state = Column(String(50), default='open')
+    accessibility_state = Column(String(50), default='open') # open, restricted, hazardous, blocked
+    distance_km = Column(Float, nullable=False, default=1.0)
+    base_travel_time_min = Column(Float, nullable=False, default=5.0)
+    risk_level = Column(Float, nullable=False, default=0.0)
+    failure_probability = Column(Float, nullable=False, default=0.0)
+    resource_cost = Column(Float, nullable=False, default=0.0)
+    road_type = Column(String(50), nullable=False, default="primary")
+    is_bridge = Column(Boolean, nullable=False, default=False)
+    max_vehicle_weight_kg = Column(Float, nullable=True)
+    max_vehicle_height_m = Column(Float, nullable=True)
+    allows_hazmat = Column(Boolean, nullable=False, default=True)
     last_updated = Column(DateTime(timezone=True), default=datetime.utcnow)
 
 class Village(Base):

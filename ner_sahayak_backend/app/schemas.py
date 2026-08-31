@@ -1,5 +1,5 @@
-from pydantic import BaseModel
-from typing import Optional, Any, Dict
+from pydantic import BaseModel, Field
+from typing import Optional, Any, Dict, List
 from uuid import UUID
 from datetime import datetime
 
@@ -12,7 +12,7 @@ class Token(BaseModel):
 
 class UserCreate(BaseModel):
     name: str
-    phone_number: str
+    email: str
     password: str
     role: str
     district: Optional[str] = None
@@ -22,7 +22,7 @@ class UserResponse(BaseModel):
     name: str
     role: str
     district: Optional[str] = None
-    phone_number: str
+    email: str
 
     class Config:
         from_attributes = True
@@ -47,7 +47,7 @@ class SupplyRequestResponse(SupplyRequestBase):
     class Config:
         from_attributes = True
 
-# --- Incidents (Field Reports / Disruptions) ---
+# --- Incidents ---
 class IncidentBase(BaseModel):
     road_segment_id: UUID
     reporter_id: UUID
@@ -66,19 +66,36 @@ class IncidentResponse(IncidentBase):
     class Config:
         from_attributes = True
 
+# --- Routing Engine Additions ---
+class VehicleConstraints(BaseModel):
+    weight_kg: Optional[float] = None
+    height_m: Optional[float] = None
+    is_hazmat: bool = False
+
+class PolicyWeights(BaseModel):
+    delay: float = 1.0
+    risk: float = 1.0
+    failure: float = 1.0
+    resource: float = 1.0
+
 # --- Deliveries (Dispatch & Proof of Delivery) ---
 class DeliveryBase(BaseModel):
     supply_request_id: UUID
     driver_id: UUID
-    route_plan: Dict[str, Any] # Contains the route coordinates and risk explanation
+    # Instead of raw route_plan payload, we calculate it dynamically
+    vehicle_constraints: Optional[VehicleConstraints] = Field(default_factory=VehicleConstraints)
+    policy_weights: Optional[PolicyWeights] = Field(default_factory=PolicyWeights)
 
 class DeliveryCreate(DeliveryBase):
     pass
 
-class DeliveryResponse(DeliveryBase):
+class DeliveryResponse(BaseModel):
     id: UUID
+    supply_request_id: UUID
+    driver_id: UUID
     status: str
     pod_notes: Optional[str] = None
+    route_plan: Dict[str, Any] # Full rationale and path chosen
     created_at: datetime
     delivered_at: Optional[datetime] = None
 

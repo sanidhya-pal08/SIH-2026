@@ -1,9 +1,30 @@
+version: '3.8'
+
 services:
-  gis-engine:
-    build: .
+  db:
+    image: postgis/postgis:15-3.4
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: ner_sahayak
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgis_data:/var/lib/postgresql/data
+      # Mount the schema so it initializes automatically on first boot
+      - ./ner_sahayak_backend/schema.sql:/docker-entrypoint-initdb.d/init.sql
+
+  api:
+    build: ./ner_sahayak_backend
     ports:
       - "8000:8000"
-    volumes:
-      - ./data:/app/data
+    restart: always
     environment:
-      - SQLITE_DB_PATH=/app/data/router.db
+      - DATABASE_URL=postgresql://postgres:postgres@db:5432/ner_sahayak
+    depends_on:
+      - db
+    volumes:
+      - ./ner_sahayak_backend:/app
+
+volumes:
+  postgis_data:
