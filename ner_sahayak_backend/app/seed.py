@@ -12,59 +12,69 @@ def seed_demo_graph(db: Session) -> None:
     if db.query(models.Village).first() is not None:
         return
 
-    # Define Node Coordinates mapping for Edge creation
+    # Define Node Coordinates mapping (Longitude, Latitude) for East Khasi Hills
     coords = {
-        "N1": (77.2090, 28.6139),
-        "N2": (77.2150, 28.6200),
-        "N3": (77.2050, 28.6280),
-        "N4": (77.2200, 28.6350),
-        "N5": (77.2300, 28.6100),
-        "N6": (77.2100, 28.6400),
+        "Shillong_HQ": (91.8933, 25.5788),
+        "Upper_Shillong": (91.8600, 25.5450),
+        "Mylliem": (91.8540, 25.5140),
+        "Mawphlang": (91.7580, 25.4450),
+        "Weiloi": (91.6850, 25.3520),
+        "Mawsynram": (91.5820, 25.2970),
+        "Cherrapunji": (91.7166, 25.2815),
+        "Laitlyngkot": (91.8340, 25.4370),
+        "Smit": (91.9280, 25.5310),
+        "Pynursla": (91.8940, 25.3050),
+        "Pongtung": (91.9500, 25.2500),
+        "Dawki": (92.0150, 25.1850),
     }
 
-    # Generate deterministic UUIDs for our mock nodes so edges can reference them
-    n1_id = uuid.uuid5(uuid.NAMESPACE_DNS, "N1")
-    n2_id = uuid.uuid5(uuid.NAMESPACE_DNS, "N2")
-    n3_id = uuid.uuid5(uuid.NAMESPACE_DNS, "N3")
-    n4_id = uuid.uuid5(uuid.NAMESPACE_DNS, "N4")
-    n5_id = uuid.uuid5(uuid.NAMESPACE_DNS, "N5")
-    n6_id = uuid.uuid5(uuid.NAMESPACE_DNS, "N6")
-
-    id_map = {
-        "N1": n1_id, "N2": n2_id, "N3": n3_id, 
-        "N4": n4_id, "N5": n5_id, "N6": n6_id
-    }
+    # Generate deterministic UUIDs for our mock nodes
+    ids = {name: uuid.uuid5(uuid.NAMESPACE_DNS, name) for name in coords}
 
     villages = [
-        models.Village(id=n1_id, name="Base Camp Alpha", district="East Khasi Hills", geom=WKTElement(f'POINT({coords["N1"][0]} {coords["N1"][1]})', srid=4326)),
-        models.Village(id=n2_id, name="Field Hospital", district="East Khasi Hills", geom=WKTElement(f'POINT({coords["N2"][0]} {coords["N2"][1]})', srid=4326)),
-        models.Village(id=n3_id, name="Supply Depot", district="East Khasi Hills", geom=WKTElement(f'POINT({coords["N3"][0]} {coords["N3"][1]})', srid=4326)),
-        models.Village(id=n4_id, name="Evacuation Point", district="East Khasi Hills", geom=WKTElement(f'POINT({coords["N4"][0]} {coords["N4"][1]})', srid=4326)),
-        models.Village(id=n5_id, name="Shelter Zone", district="East Khasi Hills", geom=WKTElement(f'POINT({coords["N5"][0]} {coords["N5"][1]})', srid=4326)),
-        models.Village(id=n6_id, name="Command Center", district="East Khasi Hills", geom=WKTElement(f'POINT({coords["N6"][0]} {coords["N6"][1]})', srid=4326)),
+        models.Village(id=ids["Shillong_HQ"], name="Shillong HQ", district="East Khasi Hills", geom=WKTElement(f'POINT({coords["Shillong_HQ"][0]} {coords["Shillong_HQ"][1]})', srid=4326), population=143229),
+        models.Village(id=ids["Upper_Shillong"], name="Upper Shillong Depot", district="East Khasi Hills", geom=WKTElement(f'POINT({coords["Upper_Shillong"][0]} {coords["Upper_Shillong"][1]})', srid=4326), population=5000),
+        models.Village(id=ids["Mylliem"], name="Mylliem", district="East Khasi Hills", geom=WKTElement(f'POINT({coords["Mylliem"][0]} {coords["Mylliem"][1]})', srid=4326), population=3200),
+        models.Village(id=ids["Mawphlang"], name="Mawphlang", district="East Khasi Hills", geom=WKTElement(f'POINT({coords["Mawphlang"][0]} {coords["Mawphlang"][1]})', srid=4326), population=4500),
+        models.Village(id=ids["Weiloi"], name="Weiloi Junction", district="East Khasi Hills", geom=WKTElement(f'POINT({coords["Weiloi"][0]} {coords["Weiloi"][1]})', srid=4326), population=1200),
+        models.Village(id=ids["Mawsynram"], name="Mawsynram", district="East Khasi Hills", geom=WKTElement(f'POINT({coords["Mawsynram"][0]} {coords["Mawsynram"][1]})', srid=4326), population=6000),
+        models.Village(id=ids["Cherrapunji"], name="Sohra (Cherrapunji)", district="East Khasi Hills", geom=WKTElement(f'POINT({coords["Cherrapunji"][0]} {coords["Cherrapunji"][1]})', srid=4326), population=14816),
+        models.Village(id=ids["Laitlyngkot"], name="Laitlyngkot", district="East Khasi Hills", geom=WKTElement(f'POINT({coords["Laitlyngkot"][0]} {coords["Laitlyngkot"][1]})', srid=4326), population=2500),
+        models.Village(id=ids["Smit"], name="Smit", district="East Khasi Hills", geom=WKTElement(f'POINT({coords["Smit"][0]} {coords["Smit"][1]})', srid=4326), population=7300),
+        models.Village(id=ids["Pynursla"], name="Pynursla", district="East Khasi Hills", geom=WKTElement(f'POINT({coords["Pynursla"][0]} {coords["Pynursla"][1]})', srid=4326), population=8500),
+        models.Village(id=ids["Pongtung"], name="Pongtung", district="East Khasi Hills", geom=WKTElement(f'POINT({coords["Pongtung"][0]} {coords["Pongtung"][1]})', srid=4326), population=1100),
+        models.Village(id=ids["Dawki"], name="Dawki Border Post", district="West Jaintia Hills", geom=WKTElement(f'POINT({coords["Dawki"][0]} {coords["Dawki"][1]})', srid=4326), population=3500),
     ]
 
     # Helper to generate LineString
     def make_line(u, v):
         return WKTElement(f'LINESTRING({coords[u][0]} {coords[u][1]}, {coords[v][0]} {coords[v][1]})', srid=4326)
 
+    def create_road(source, target, name, d, t, risk=0.1, bridge=False, weight=None):
+        return models.RoadSegment(
+            name=name, source_id=ids[source], target_id=ids[target], geom=make_line(source, target),
+            distance_km=d, base_travel_time_min=t, risk_level=risk, failure_probability=risk/2, resource_cost=d*2,
+            road_type="primary", is_bridge=bridge, max_vehicle_weight_kg=weight, allows_hazmat=True
+        )
+
     edges = [
-        # N1 -> N2
-        models.RoadSegment(name="Route Alpha-Med", source_id=n1_id, target_id=n2_id, geom=make_line("N1", "N2"), distance_km=1.2, base_travel_time_min=4.0, risk_level=0.1, failure_probability=0.05, resource_cost=10.0, road_type="primary", is_bridge=False, allows_hazmat=True),
-        # N1 -> N3
-        models.RoadSegment(name="Depot Supply Line", source_id=n1_id, target_id=n3_id, geom=make_line("N1", "N3"), distance_km=2.5, base_travel_time_min=8.0, risk_level=0.05, failure_probability=0.02, resource_cost=15.0, road_type="primary", is_bridge=False, allows_hazmat=True),
-        # N2 -> N4 (Bridge)
-        models.RoadSegment(name="Hospital Evac Bridge", source_id=n2_id, target_id=n4_id, geom=make_line("N2", "N4"), distance_km=2.0, base_travel_time_min=6.0, risk_level=0.3, failure_probability=0.15, resource_cost=20.0, road_type="secondary", is_bridge=True, max_vehicle_weight_kg=10000.0, allows_hazmat=False),
-        # N3 -> N4
-        models.RoadSegment(name="Depot Evac Route", source_id=n3_id, target_id=n4_id, geom=make_line("N3", "N4"), distance_km=3.0, base_travel_time_min=10.0, risk_level=0.15, failure_probability=0.08, resource_cost=25.0, road_type="primary", is_bridge=False, allows_hazmat=True),
-        # N2 -> N5
-        models.RoadSegment(name="Shelter Connector", source_id=n2_id, target_id=n5_id, geom=make_line("N2", "N5"), distance_km=1.8, base_travel_time_min=5.0, risk_level=0.2, failure_probability=0.10, resource_cost=12.0, road_type="secondary", is_bridge=False, allows_hazmat=True),
-        # N5 -> N4
-        models.RoadSegment(name="Shelter Evac Route", source_id=n5_id, target_id=n4_id, geom=make_line("N5", "N4"), distance_km=3.5, base_travel_time_min=12.0, risk_level=0.25, failure_probability=0.12, resource_cost=30.0, road_type="tertiary", is_bridge=False, max_vehicle_weight_kg=5000.0, allows_hazmat=True),
-        # N3 -> N6
-        models.RoadSegment(name="Command Supply Route", source_id=n3_id, target_id=n6_id, geom=make_line("N3", "N6"), distance_km=2.2, base_travel_time_min=7.0, risk_level=0.10, failure_probability=0.03, resource_cost=18.0, road_type="primary", is_bridge=False, allows_hazmat=True),
-        # N6 -> N4 (Bridge)
-        models.RoadSegment(name="Command Evac Bridge", source_id=n6_id, target_id=n4_id, geom=make_line("N6", "N4"), distance_km=1.5, base_travel_time_min=5.0, risk_level=0.20, failure_probability=0.07, resource_cost=22.0, road_type="secondary", is_bridge=True, max_vehicle_weight_kg=15000.0, allows_hazmat=True),
+        create_road("Shillong_HQ", "Upper_Shillong", "NH-06 Shillong City", 8.0, 20.0),
+        create_road("Upper_Shillong", "Mylliem", "NH-06 Mylliem Approach", 7.5, 15.0),
+        create_road("Mylliem", "Mawphlang", "SH-5 Mawphlang Road", 14.0, 30.0, 0.2),
+        create_road("Mawphlang", "Weiloi", "SH-5 Weiloi Link", 15.0, 35.0, 0.25),
+        create_road("Weiloi", "Mawsynram", "Mawsynram Route", 18.0, 45.0, 0.35),
+        create_road("Weiloi", "Cherrapunji", "Sohra Road", 20.0, 50.0, 0.3),
+        create_road("Mylliem", "Laitlyngkot", "NH-06 Laitlyngkot", 13.0, 25.0),
+        create_road("Laitlyngkot", "Pynursla", "NH-06 Pynursla Pass", 19.0, 40.0, 0.4), # High risk landslide pass
+        create_road("Pynursla", "Pongtung", "NH-06 Pongtung Link", 12.0, 25.0, 0.15),
+        create_road("Pongtung", "Dawki", "Dawki Highway", 14.0, 30.0, 0.2),
+        create_road("Shillong_HQ", "Smit", "Smit Connector", 16.0, 35.0),
+        create_road("Smit", "Laitlyngkot", "Smit-Laitlyngkot Secondary", 15.0, 40.0, 0.25),
+        create_road("Mawphlang", "Cherrapunji", "Cherrapunji Detour", 25.0, 65.0, 0.5), # Very steep/risky
+        create_road("Upper_Shillong", "Laitlyngkot", "Upper Shillong Bypass", 18.0, 35.0, 0.1),
+        create_road("Laitlyngkot", "Cherrapunji", "Sohra Shortcut", 24.0, 55.0, 0.3),
+        # A river bridge near Dawki
+        create_road("Pynursla", "Dawki", "Umngot River Bridge Route", 30.0, 60.0, 0.4, True, 10000.0) 
     ]
 
     # 1. Create Villages & Edges (Nodes & Links)
@@ -86,7 +96,7 @@ def seed_demo_graph(db: Session) -> None:
         email="driver@nersahayak.gov.in", hashed_password=get_password_hash("driver123")
     )
     village_rep = models.User(
-        name="Dr. Smith (Hospital)", role="village_rep", district="East Khasi Hills",
+        name="Dr. Khongwir (Sohra Hospital)", role="village_rep", district="East Khasi Hills",
         email="hospital@nersahayak.gov.in", hashed_password=get_password_hash("hospital123")
     )
     db.add_all([admin, driver, village_rep])
@@ -94,19 +104,30 @@ def seed_demo_graph(db: Session) -> None:
 
     # 3. Create a Golden Demo Supply Request
     urgent_request = models.SupplyRequest(
-        village_id=n4_id,
+        village_id=ids["Cherrapunji"],
         requester_id=village_rep.id,
+        commodity_category="Medical/Blood/O2",
         commodity="O2 Cylinders & Medical Kits",
         quantity=50,
         urgency="emergency",
+        stockout_days=0,
         priority_score=95.5,
+        priority_breakdown={
+            "urgency_score": 60.0,
+            "criticality_score": 30.0,
+            "population_score": 8.34,
+            "isolation_score": 0.0,
+            "stockout_score": 20.0,
+            "local_supply_penalty": 0.0,
+            "raw_total": 118.34,
+            "final_capped": 100.0
+        },
         status="pending"
     )
     db.add(urgent_request)
 
-    # 4. Create an Active Landslide Incident (Blocking the fastest route!)
-    # We will block the "Hospital Evac Bridge" (N2 -> N4) so the AI is forced to reroute.
-    bridge_edge = db.query(models.RoadSegment).filter(models.RoadSegment.name == "Hospital Evac Bridge").first()
+    # 4. Create an Active Landslide Incident (Blocking the fastest route to Cherrapunji)
+    bridge_edge = db.query(models.RoadSegment).filter(models.RoadSegment.name == "Sohra Road").first()
     if bridge_edge:
         bridge_edge.accessibility_state = "blocked"
         

@@ -1,11 +1,13 @@
 from fastapi import FastAPI, Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.orm import Session
-from typing import List
+from typing import List, Optional
 from uuid import UUID
 from datetime import datetime
+import json
+from sqlalchemy import func
 
-from . import models, schemas, auth, graph_engine
+from . import models, schemas, auth, graph_engine, priority_engine, routing_service
 from .database import engine, get_db, SessionLocal
 from .seed import seed_demo_graph
 
@@ -62,10 +64,32 @@ def register_user(user: schemas.UserCreate, db: Session = Depends(get_db)):
     db.refresh(new_user)
     return new_user
 
+@app.get("/api/v1/users", response_model=List[schemas.UserResponse])
+def get_users(role: Optional[str] = None, db: Session = Depends(get_db), current_user: models.User = Depends(auth.get_current_user)):
+    query = db.query(models.User)
+    if role:
+        query = query.filter(models.User.role == role)
+    return query.all()
+
 @app.post("/api/v1/requests", response_model=schemas.SupplyRequestResponse)
 def create_supply_request(req: schemas.SupplyRequestCreate, db: Session = Depends(get_db), current_user: models.User = Depends(auth.get_current_user)):
     db_request = models.SupplyRequest(**req.model_dump())
-    db_request.priority_score = 75.5 if req.urgency == 'emergency' else 10.0
+    
+    village = db.query(models.Village).filter(models.Village.id == req.village_id).first()
+    pop = village.population if village else 0
+    iso = village.isolation_score if village else 0.0
+
+    score, breakdown = priority_engine.calculate_priority(
+        urgency=req.urgency,
+        category=req.commodity_category,
+        population=pop,
+        isolation=iso,
+        stockout_days=req.stockout_days,
+        local_supply=0
+    )
+    
+    db_request.priority_score = score
+    db_request.priority_breakdown = breakdown
     db.add(db_request)
     db.flush()
 
@@ -73,6 +97,27 @@ def create_supply_request(req: schemas.SupplyRequestCreate, db: Session = Depend
     db.commit()
     db.refresh(db_request)
     return db_request
+
+@app.patch("/api/v1/requests/{request_id}/override", response_model=schemas.SupplyRequestResponse)
+def override_supply_request(request_id: UUID, req: schemas.PriorityOverrideRequest, db: Session = Depends(get_db), current_user: models.User = Depends(allow_control_room)):
+    db_req = db.query(models.SupplyRequest).filter(models.SupplyRequest.id == request_id).first()
+    if not db_req:
+        raise HTTPException(status_code=404, detail="Supply request not found")
+    
+    db_req.priority_score = req.new_score
+    db_req.is_overridden = True
+    db_req.override_reason = req.override_reason
+    db.flush()
+
+    db.add(models.EventLog(
+        event_type="PriorityOverridden", 
+        actor_id=current_user.id, 
+        correlation_id=db_req.id, 
+        payload={"new_score": req.new_score, "override_reason": req.override_reason}
+    ))
+    db.commit()
+    db.refresh(db_req)
+    return db_req
 
 @app.get("/api/v1/requests", response_model=List[schemas.SupplyRequestResponse])
 def list_supply_requests(skip: int = 0, limit: int = 100, db: Session = Depends(get_db), current_user: models.User = Depends(allow_control_room)):
@@ -94,71 +139,73 @@ def report_incident(req: schemas.IncidentCreate, db: Session = Depends(get_db), 
     db.refresh(db_incident)
     return db_incident
 
+@app.post("/api/v1/routes/evaluate", response_model=schemas.RouteEvaluationResponse)
+def evaluate_route(req: schemas.RouteEvaluationRequest, db: Session = Depends(get_db), current_user: models.User = Depends(allow_control_room)):
+    return routing_service.evaluate_routes(
+        db=db,
+        source_id=str(req.source_village_id),
+        target_id=str(req.target_village_id),
+        vehicle_constraints=req.vehicle_constraints,
+        policy_weights=req.policy_weights
+    )
+
 @app.post("/api/v1/deliveries", response_model=schemas.DeliveryResponse)
 def dispatch_delivery(req: schemas.DeliveryCreate, db: Session = Depends(get_db), current_user: models.User = Depends(allow_control_room)):
-    # 1. Fetch source (HQ or current village) and target (Request destination)
     db_req = db.query(models.SupplyRequest).filter(models.SupplyRequest.id == req.supply_request_id).first()
     if not db_req:
         raise HTTPException(status_code=404, detail="Supply request not found")
         
-    # Assume source is some HQ node for now, or driver location. We'll use a hardcoded node ID from the DB in reality.
-    target_node = str(db_req.village_id)
-    
-    # 2. Graph Routing Math!
-    nodes = db.query(models.Village).all()
-    edges = db.query(models.RoadSegment).all()
-    
-    if not nodes or not edges:
-        raise HTTPException(status_code=503, detail="Graph not seeded in PostGIS yet.")
+    if not req.route_plan or not req.route_plan.get("feasible"):
+        raise HTTPException(status_code=400, detail="Cannot dispatch without a feasible route plan.")
         
-    source_node = str(nodes[0].id) # Simple mock: start at the first village (Base Camp)
-
-    graph = graph_engine.build_graph(nodes, edges)
-    pruned_graph, pruned_log = graph_engine.prune_graph(
-        graph, 
-        vehicle_weight_kg=req.vehicle_constraints.weight_kg if req.vehicle_constraints else None,
-        vehicle_height_m=req.vehicle_constraints.height_m if req.vehicle_constraints else None,
-        is_hazmat=req.vehicle_constraints.is_hazmat if req.vehicle_constraints else False
-    )
-    
-    weighted_graph = graph_engine.apply_policy_weights(
-        pruned_graph,
-        w_delay=req.policy_weights.delay if req.policy_weights else 1.0,
-        w_risk=req.policy_weights.risk if req.policy_weights else 1.0,
-        w_failure=req.policy_weights.failure if req.policy_weights else 1.0,
-        w_resource=req.policy_weights.resource if req.policy_weights else 1.0
-    )
-    
-    paths = graph_engine.find_k_shortest_paths(weighted_graph, source_node, target_node, k=3)
-    confidence = graph_engine.compute_confidence(paths)
-    rationale = graph_engine.build_rationale(paths, pruned_log, confidence)
-    
-    if not paths:
-        raise HTTPException(status_code=400, detail="No feasible route found. Escalate to air delivery.")
-
-    # 3. Create delivery using the mathematically proven best route
     db_delivery = models.Delivery(
         supply_request_id=req.supply_request_id,
         driver_id=req.driver_id,
-        route_plan=rationale,
+        route_plan=req.route_plan,
         status="dispatched"
     )
     db.add(db_delivery)
     db_req.status = 'assigned'
     db.flush()
     
-    db.add(models.EventLog(event_type="DispatchApproved", actor_id=current_user.id, correlation_id=db_delivery.id, payload=rationale))
+    db.add(models.EventLog(event_type="DispatchApproved", actor_id=current_user.id, correlation_id=db_delivery.id, payload=req.route_plan))
     db.commit()
     db.refresh(db_delivery)
     return db_delivery
 
-@app.get("/api/v1/roads")
+@app.get("/api/v1/roads", response_model=List[schemas.RoadSegmentResponse])
 def get_roads(db: Session = Depends(get_db)):
     return db.query(models.RoadSegment).all()
 
-@app.get("/api/v1/villages")
+@app.get("/api/v1/villages", response_model=List[schemas.VillageResponse])
 def get_villages(db: Session = Depends(get_db)):
-    return db.query(models.Village).all()
+    villages = db.query(models.Village, func.ST_Y(models.Village.geom).label('lat'), func.ST_X(models.Village.geom).label('lng')).all()
+    result = []
+    for v, lat, lng in villages:
+        v_dict = v.__dict__.copy()
+        v_dict['coords'] = [lat, lng]
+        result.append(v_dict)
+    return result
+
+@app.get("/api/v1/roads/geojson")
+def get_roads_geojson(db: Session = Depends(get_db)):
+    roads = db.query(models.RoadSegment, func.ST_AsGeoJSON(models.RoadSegment.geom).label('geojson')).all()
+    features = []
+    for road, geojson_str in roads:
+        features.append({
+            "type": "Feature",
+            "properties": {
+                "id": str(road.id),
+                "name": road.name,
+                "accessibility_state": road.accessibility_state,
+                "risk_level": road.risk_level,
+                "is_bridge": road.is_bridge,
+                "max_vehicle_weight_kg": road.max_vehicle_weight_kg,
+                "last_updated": road.last_updated.isoformat() if road.last_updated else None
+            },
+            "geometry": json.loads(geojson_str)
+        })
+    return {"type": "FeatureCollection", "features": features}
 
 @app.get("/api/v1/deliveries")
 def get_deliveries(db: Session = Depends(get_db)):

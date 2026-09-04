@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { BrowserRouter, Routes, Route, Navigate, useNavigate, Link } from 'react-router-dom';
-import { MapContainer, TileLayer, Marker, Popup, Polyline } from 'react-leaflet';
+import { MapContainer, TileLayer, Marker, Popup, Polyline, GeoJSON } from 'react-leaflet';
 import 'leaflet/dist/leaflet.css';
 import './App.css';
 import api from './api';
@@ -16,15 +16,6 @@ L.Icon.Default.mergeOptions({
   iconUrl: markerIcon,
   shadowUrl: markerShadow,
 });
-
-const VILLAGES = {
-  "9ee6cf9a-42a1-5d91-9d36-93e343b27581": { name: "Base Camp Alpha", coords: [28.6139, 77.2090], id: "N1" },
-  "4cd6c234-9cc9-57d9-8050-232f05c3e6c9": { name: "Field Hospital", coords: [28.6200, 77.2150], id: "N2" },
-  "9c683dd2-65b0-58fe-a952-1bd17e1c04a3": { name: "Supply Depot", coords: [28.6280, 77.2050], id: "N3" },
-  "e0b80a71-2217-5939-b047-d22900fbeedd": { name: "Evacuation Point", coords: [28.6350, 77.2200], id: "N4" },
-  "d1482c21-214c-50aa-aba5-e1ded723816b": { name: "Shelter Zone", coords: [28.6100, 77.2300], id: "N5" },
-  "ee67ad07-f12f-54ec-aa00-97f1d6ed72a5": { name: "Command Center", coords: [28.6400, 77.2100], id: "N6" },
-};
 
 function Login() {
   const [email, setEmail] = useState('');
@@ -131,10 +122,20 @@ function Dashboard() {
   const [requests, setRequests] = useState([]);
   const [deliveries, setDeliveries] = useState([]);
   const [roads, setRoads] = useState([]);
+  const [villages, setVillages] = useState({});
+  const [roadsGeojson, setRoadsGeojson] = useState(null);
   
   const [selectedRequest, setSelectedRequest] = useState(null);
   const [routePlan, setRoutePlan] = useState(null);
+  const [activeRouteIndex, setActiveRouteIndex] = useState(0);
+  const [selectedDriver, setSelectedDriver] = useState('');
+  const [drivers, setDrivers] = useState([]);
   const [loading, setLoading] = useState(false);
+  
+  const [overrideTarget, setOverrideTarget] = useState(null);
+  const [overrideScore, setOverrideScore] = useState('');
+  const [overrideReason, setOverrideReason] = useState('');
+
   const navigate = useNavigate();
 
   const userRole = localStorage.getItem('role') || 'Unknown';
@@ -144,6 +145,18 @@ function Dashboard() {
       const reqRes = await api.get('/requests');
       setRequests(reqRes.data);
       
+      const villRes = await api.get('/villages');
+      const villObj = {};
+      villRes.data.forEach(v => { villObj[v.id] = { name: v.name, coords: v.coords, id: v.id }; });
+      setVillages(villObj);
+      
+      try {
+        const geoRes = await api.get('/roads/geojson');
+        setRoadsGeojson(geoRes.data);
+      } catch (err) {
+        console.warn("Could not fetch road geojson yet", err);
+      }
+
       if (userRole === 'field_officer') {
         const roadRes = await api.get('/roads');
         setRoads(roadRes.data);
@@ -153,12 +166,28 @@ function Dashboard() {
         const delRes = await api.get('/deliveries');
         setDeliveries(delRes.data);
       }
+
+      if (userRole === 'control_room') {
+        try {
+          const driverRes = await api.get('/users?role=driver');
+          setDrivers(driverRes.data);
+        } catch (e) {
+          console.warn("Could not fetch drivers", e);
+        }
+      }
     } catch (err) {
       console.error("Fetch failed", err);
     }
   };
 
   useEffect(() => { fetchData(); }, [userRole]);
+
+  // Set initial default for village_id when villages load
+  useEffect(() => {
+    if (Object.keys(villages).length > 0 && !newRequest.village_id) {
+      setNewRequest(prev => ({ ...prev, village_id: Object.keys(villages)[0] }));
+    }
+  }, [villages]);
 
   const handleLogout = () => {
     localStorage.removeItem('token');
@@ -170,36 +199,84 @@ function Dashboard() {
   const handleDispatch = async (req) => {
     setLoading(true);
     try {
-      // Fake delay for UI drama
-      setTimeout(() => {
-        setRoutePlan({
-          summary: "Recommended route (rank 1) traverses 3 nodes with a cost of 12.5. The 'Hospital Evac Bridge' was actively blocked by a Landslide incident, forcing a reroute through 'Shelter Zone'. 2 alternative routes available. Confidence: 85.2%.",
-          nodes: [
-            "9ee6cf9a-42a1-5d91-9d36-93e343b27581", 
-            "4cd6c234-9cc9-57d9-8050-232f05c3e6c9", 
-            "d1482c21-214c-50aa-aba5-e1ded723816b", 
-            "e0b80a71-2217-5939-b047-d22900fbeedd"  
-          ] 
-        });
-        setSelectedRequest(req);
-        setLoading(false);
-      }, 1000);
+      const hq_id = Object.keys(villages)[0]; // Fallback to first village as HQ for MVP
+      const res = await api.post('/routes/evaluate', {
+        source_village_id: hq_id,
+        target_village_id: req.village_id,
+        vehicle_constraints: {},
+        policy_weights: {}
+      });
+      setRoutePlan(res.data);
+      setSelectedRequest(req);
     } catch (error) {
       console.error(error);
+      alert("Route evaluation failed: " + (error.response?.data?.detail || error.message));
+    } finally {
       setLoading(false);
     }
   };
 
   const confirmDispatch = async () => {
-    alert("Delivery Dispatched successfully!");
-    // Optimistic UI update
-    setRequests(requests.filter(r => r.id !== selectedRequest.id));
-    setSelectedRequest(null);
-    setRoutePlan(null);
+    if (!selectedDriver) {
+      alert("Please select a driver to assign.");
+      return;
+    }
+    
+    const payload = {
+      supply_request_id: selectedRequest.id,
+      driver_id: selectedDriver,
+      route_plan: {
+        feasible: routePlan.feasible,
+        summary: routePlan.summary,
+        constraints_applied: routePlan.constraints_applied,
+        recommendation: routePlan.recommendation,
+        alternatives: routePlan.alternatives,
+        chosen_alternative_index: activeRouteIndex
+      }
+    };
+    
+    try {
+      await api.post('/deliveries', payload);
+      alert("Delivery Dispatched successfully!");
+      setRequests(requests.filter(r => r.id !== selectedRequest.id));
+      setSelectedRequest(null);
+      setRoutePlan(null);
+      setActiveRouteIndex(0);
+      setSelectedDriver('');
+    } catch (error) {
+      alert("Dispatch failed: " + (error.response?.data?.detail || error.message));
+    }
+  };
+
+  // --- CONTROL ROOM FUNCTIONS (OVERRIDE) ---
+  const handleOverrideSubmit = async () => {
+    if (overrideReason.length < 15) {
+      alert("Reason must be at least 15 characters long.");
+      return;
+    }
+    try {
+      await api.patch(`/requests/${overrideTarget.id}/override`, { 
+        new_score: parseFloat(overrideScore), 
+        override_reason: overrideReason 
+      });
+      alert("Priority successfully overridden!");
+      setOverrideTarget(null);
+      setOverrideScore('');
+      setOverrideReason('');
+      fetchData();
+    } catch (err) {
+      alert("Failed to override priority.");
+    }
+  };
+
+  const getPriorityColor = (score) => {
+    if (score >= 80) return '#dc2626'; // Critical (Red)
+    if (score >= 50) return '#f97316'; // Urgent (Orange)
+    return '#10b981'; // Routine (Green)
   };
 
   // --- HOSPITAL / VILLAGE REP FUNCTIONS ---
-  const [newRequest, setNewRequest] = useState({ commodity: '', quantity: 10, urgency: 'routine', village_id: Object.keys(VILLAGES)[1] });
+  const [newRequest, setNewRequest] = useState({ commodity_category: 'General', commodity: '', quantity: 10, urgency: 'routine', stockout_days: 0, village_id: '' });
   const submitRequest = async (e) => {
     e.preventDefault();
     try {
@@ -235,7 +312,27 @@ function Dashboard() {
   };
 
 
-  const routeCoordinates = routePlan ? routePlan.nodes.map(n => VILLAGES[n]?.coords).filter(Boolean) : [];
+  const routeCoordinates = (routePlan && routePlan.alternatives && routePlan.alternatives.length > activeRouteIndex) 
+    ? routePlan.alternatives[activeRouteIndex].coordinates 
+    : [];
+
+  const roadStyle = (feature) => {
+    const state = feature.properties.accessibility_state;
+    if (state === 'open') return { color: '#10b981', weight: 4 };
+    if (state === 'hazardous') return { color: '#f59e0b', weight: 4, dashArray: '5, 5' };
+    if (state === 'restricted') return { color: '#8b5cf6', weight: 4 };
+    if (state === 'blocked') return { color: '#ef4444', weight: 4 };
+    return { color: '#3388ff', weight: 4 };
+  };
+
+  const onEachRoad = (feature, layer) => {
+    const p = feature.properties;
+    layer.bindPopup(
+      `<strong>${p.name}</strong><br/>
+       Status: ${p.accessibility_state ? p.accessibility_state.toUpperCase() : 'UNKNOWN'}<br/>
+       Bridge: ${p.is_bridge ? 'Yes' : 'No'} ${p.is_bridge && p.max_vehicle_weight_kg ? `(Max ${p.max_vehicle_weight_kg/1000} T)` : ''}`
+    );
+  };
 
   return (
     <div className="dashboard">
@@ -256,11 +353,23 @@ function Dashboard() {
               <h2 className="section-title">Pending Requests</h2>
               {requests.filter(r => r.status === 'pending' || r.status === 'open').map(req => (
                 <div key={req.id} className="request-card">
-                  <div className="request-header">
-                    <span className="commodity">{req.commodity} ({req.quantity})</span>
-                    <span className={`urgency-badge urgency-${req.urgency}`}>{req.urgency}</span>
+                  <div className="request-header" style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center'}}>
+                    <div>
+                      <span className="commodity" style={{display: 'block'}}>{req.commodity} ({req.quantity})</span>
+                      <span className={`urgency-badge urgency-${req.urgency}`}>{req.urgency}</span>
+                    </div>
+                    <div style={{display: 'flex', gap: '10px', alignItems: 'center'}}>
+                      <span 
+                        className="priority-chip" 
+                        style={{ background: getPriorityColor(req.priority_score), color: 'white', padding: '4px 10px', borderRadius: '12px', fontSize: '0.9rem', cursor: 'help', fontWeight: 'bold' }}
+                        title={req.priority_breakdown ? JSON.stringify(req.priority_breakdown, null, 2) : 'No breakdown available'}
+                      >
+                        Score: {req.priority_score?.toFixed(1)} {req.is_overridden && '⚠️'}
+                      </span>
+                      <button className="btn-secondary" style={{padding: '4px 10px', fontSize: '0.8rem', background: '#e2e8f0', color: '#1e293b'}} onClick={() => { setOverrideTarget(req); setOverrideScore(req.priority_score); }}>Override</button>
+                    </div>
                   </div>
-                  <div className="village-name">Destination: {VILLAGES[req.village_id]?.name || 'Unknown'}</div>
+                  <div className="village-name">Destination: {villages[req.village_id]?.name || 'Unknown'}</div>
                   <button className="dispatch-btn" onClick={() => handleDispatch(req)} disabled={loading}>
                     {loading ? 'Evaluating...' : 'Evaluate Route & Dispatch'}
                   </button>
@@ -276,7 +385,16 @@ function Dashboard() {
               <h2 className="section-title">Request Supplies</h2>
               <form onSubmit={submitRequest} style={{background: 'white', padding: '15px', borderRadius: '8px', marginBottom: '20px', border: '1px solid #e2e8f0'}}>
                 <div className="form-group">
-                  <label>Commodity</label>
+                  <label>Commodity Category</label>
+                  <select className="form-control" value={newRequest.commodity_category} onChange={e => setNewRequest({...newRequest, commodity_category: e.target.value})}>
+                    <option value="Medical/Blood/O2">Medical / Blood / O2</option>
+                    <option value="Drinking Water">Drinking Water</option>
+                    <option value="Food">Food</option>
+                    <option value="General">General / Others</option>
+                  </select>
+                </div>
+                <div className="form-group">
+                  <label>Commodity Item Name</label>
                   <input type="text" className="form-control" value={newRequest.commodity} onChange={e => setNewRequest({...newRequest, commodity: e.target.value})} required placeholder="e.g. Oxygen Cylinders" />
                 </div>
                 <div className="form-group">
@@ -292,9 +410,13 @@ function Dashboard() {
                   </select>
                 </div>
                 <div className="form-group">
+                  <label>Stockout Days (Remaining days of supply)</label>
+                  <input type="number" className="form-control" min="0" value={newRequest.stockout_days} onChange={e => setNewRequest({...newRequest, stockout_days: parseInt(e.target.value)})} required />
+                </div>
+                <div className="form-group">
                   <label>Your Location</label>
                   <select className="form-control" value={newRequest.village_id} onChange={e => setNewRequest({...newRequest, village_id: e.target.value})}>
-                    {Object.entries(VILLAGES).map(([id, v]) => <option key={id} value={id}>{v.name}</option>)}
+                    {Object.entries(villages).map(([id, v]) => <option key={id} value={id}>{v.name}</option>)}
                   </select>
                 </div>
                 <button type="submit" className="dispatch-btn">Submit Request</button>
@@ -361,9 +483,18 @@ function Dashboard() {
       </div>
 
       <div className="map-area">
-        <MapContainer center={[28.6250, 77.2150]} zoom={13} scrollWheelZoom={true}>
+        <MapContainer center={[25.5788, 91.8933]} zoom={10} scrollWheelZoom={true}>
           <TileLayer attribution='&copy; OpenStreetMap' url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
-          {Object.entries(VILLAGES).map(([key, data]) => (
+          
+          {roadsGeojson && (
+            <GeoJSON 
+              data={roadsGeojson} 
+              style={roadStyle} 
+              onEachFeature={onEachRoad}
+            />
+          )}
+
+          {Object.entries(villages).map(([key, data]) => (
             <Marker key={key} position={data.coords}>
               <Popup>{data.name}</Popup>
             </Marker>
@@ -376,15 +507,81 @@ function Dashboard() {
 
       {selectedRequest && routePlan && (
         <div className="modal-overlay">
-          <div className="modal-content">
+          <div className="modal-content" style={{maxWidth: '600px'}}>
             <h2>Route Evaluation Complete</h2>
-            <div className="route-rationale">
-              <strong>Rationale:</strong> {routePlan.summary}<br/><br/>
-              <strong>Path:</strong> {routePlan.nodes.map(n => VILLAGES[n]?.name).join(" ➔ ")}
+            <div className="route-rationale" style={{marginBottom: '15px'}}>
+              <strong>Rationale:</strong> {routePlan.summary}
+              {routePlan.constraints_applied && routePlan.constraints_applied.length > 0 && (
+                <div style={{color: '#dc2626', marginTop: '10px', fontSize: '0.9rem'}}>
+                  <strong>Constraints Applied:</strong>
+                  <ul style={{marginTop: '5px', paddingLeft: '20px'}}>
+                    {routePlan.constraints_applied.map((c, i) => <li key={i}>{c.reason}</li>)}
+                  </ul>
+                </div>
+              )}
+            </div>
+            
+            {routePlan.feasible && (
+              <>
+                <table style={{width: '100%', marginBottom: '15px', borderCollapse: 'collapse'}}>
+                  <thead>
+                    <tr>
+                      <th style={{borderBottom: '1px solid #ccc', padding: '8px', textAlign: 'left'}}>Option</th>
+                      <th style={{borderBottom: '1px solid #ccc', padding: '8px', textAlign: 'left'}}>Cost</th>
+                      <th style={{borderBottom: '1px solid #ccc', padding: '8px', textAlign: 'left'}}>Action</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {routePlan.alternatives.map((alt, idx) => (
+                      <tr key={idx} style={{background: activeRouteIndex === idx ? '#eff6ff' : 'transparent'}}>
+                        <td style={{padding: '8px', borderBottom: '1px solid #eee'}}>Rank {alt.rank}</td>
+                        <td style={{padding: '8px', borderBottom: '1px solid #eee'}}>{alt.total_cost}</td>
+                        <td style={{padding: '8px', borderBottom: '1px solid #eee'}}>
+                          <button className="btn-secondary" style={{padding: '4px 8px', fontSize: '0.8rem'}} onClick={() => setActiveRouteIndex(idx)}>View Map</button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+                
+                <div className="form-group">
+                  <label>Assign Driver</label>
+                  <select className="form-control" value={selectedDriver} onChange={e => setSelectedDriver(e.target.value)} required>
+                    <option value="">-- Select Driver --</option>
+                    {drivers.map(d => (
+                      <option key={d.id} value={d.id}>{d.name}</option>
+                    ))}
+                  </select>
+                </div>
+              </>
+            )}
+            
+            <div className="modal-actions">
+              <button className="btn-secondary" onClick={() => { setSelectedRequest(null); setRoutePlan(null); setActiveRouteIndex(0); setSelectedDriver(''); }}>Cancel</button>
+              {routePlan.feasible && (
+                <button className="btn-primary" onClick={confirmDispatch} disabled={!selectedDriver}>Approve & Dispatch</button>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {overrideTarget && (
+        <div className="modal-overlay">
+          <div className="modal-content">
+            <h2>Override Priority Score</h2>
+            <p>Manually adjust the priority for: <strong>{overrideTarget.commodity}</strong></p>
+            <div className="form-group">
+              <label>New Priority Score (0-100)</label>
+              <input type="number" className="form-control" value={overrideScore} onChange={e => setOverrideScore(e.target.value)} min="0" max="100" required />
+            </div>
+            <div className="form-group">
+              <label>Override Rationale (min 15 chars)</label>
+              <textarea className="form-control" value={overrideReason} onChange={e => setOverrideReason(e.target.value)} minLength="15" required rows="3"></textarea>
             </div>
             <div className="modal-actions">
-              <button className="btn-secondary" onClick={() => setSelectedRequest(null)}>Cancel</button>
-              <button className="btn-primary" onClick={confirmDispatch}>Approve & Dispatch</button>
+              <button className="btn-secondary" onClick={() => setOverrideTarget(null)}>Cancel</button>
+              <button className="btn-primary" style={{background: '#dc2626'}} onClick={handleOverrideSubmit}>Apply Override</button>
             </div>
           </div>
         </div>
