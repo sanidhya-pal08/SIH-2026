@@ -4,6 +4,8 @@ import pytest
 import httpx
 from sqlalchemy.orm import Session
 
+os.environ["USE_MOCK_ENV_DATA"] = "1"
+
 # Ensure /app is in sys.path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
@@ -60,3 +62,24 @@ def village_rep_token():
     res = post("/api/v1/auth/login", data={"username": "hospital@nersahayak.gov.in", "password": "hospital123"})
     assert res.status_code == 200, f"Village rep login failed: {res.text}"
     return res.json()["access_token"]
+
+@pytest.fixture
+def db(db_session):
+    return db_session
+
+@pytest.fixture
+def test_user_control_room(db_session):
+    return db_session.query(models.User).filter(models.User.email == "officer@nersahayak.gov.in").first()
+
+@pytest.fixture
+def test_user_field_officer(db_session):
+    return db_session.query(models.User).filter(models.User.email == "fo@nersahayak.gov.in").first()
+
+@pytest.fixture
+def test_user_driver(db_session):
+    return db_session.query(models.User).filter(models.User.email == "driver@nersahayak.gov.in").first()
+
+@pytest.fixture
+def test_user_village_rep(db_session):
+    return db_session.query(models.User).filter(models.User.email == "hospital@nersahayak.gov.in").first()
+

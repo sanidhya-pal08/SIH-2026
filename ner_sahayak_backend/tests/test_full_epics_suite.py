@@ -152,8 +152,8 @@ def test_epic2_unauthorized_override(driver_token, field_officer_token):
 def test_epic3_route_evaluation_and_alternatives(control_room_token):
     """Verify routing engine evaluates feasible paths with costs and alternatives."""
     villages = get("/api/v1/villages", token=control_room_token).json()
-    shillong = villages[0]["id"]
-    dawki = villages[-1]["id"]
+    shillong = next(v["id"] for v in villages if "Shillong HQ" in v["name"])
+    dawki = next(v["id"] for v in villages if "Dawki" in v["name"])
 
     res = post("/api/v1/routes/evaluate", json={
         "source_village_id": shillong,
@@ -175,9 +175,12 @@ def test_epic3_dispatch_lifecycle(control_room_token, field_officer_token, db_se
     drivers = get("/api/v1/users", token=control_room_token, params={"role": "driver"}).json()
     assert len(drivers) > 0
 
+    shillong_id = next(v["id"] for v in villages if "Shillong HQ" in v["name"])
+    target_id = next(v["id"] for v in villages if "Dawki" in v["name"])
+
     # 1. Create request
     req = post("/api/v1/requests", json={
-        "village_id": villages[1]["id"],
+        "village_id": target_id,
         "requester_id": fo_users[0]["id"],
         "commodity": "Dispatch Lifecycle Test Meds",
         "quantity": 15,
@@ -187,8 +190,8 @@ def test_epic3_dispatch_lifecycle(control_room_token, field_officer_token, db_se
 
     # 2. Evaluate route
     route = post("/api/v1/routes/evaluate", json={
-        "source_village_id": villages[0]["id"],
-        "target_village_id": villages[1]["id"],
+        "source_village_id": shillong_id,
+        "target_village_id": target_id,
         "vehicle_constraints": {},
         "policy_weights": {}
     }, token=control_room_token).json()
@@ -241,7 +244,7 @@ def test_epic3_unauthorized_dispatch(field_officer_token, driver_token):
 
 def test_epic4_environmental_sync_and_predictions(control_room_token, db_session):
     """Verify environmental sync triggers risk predictions and updates segment risk bands."""
-    sync_res = post("/api/v1/environmental/sync", token=control_room_token)
+    sync_res = post("/api/v1/environmental/sync?use_mock=true", token=control_room_token)
     assert sync_res.status_code == 200
     assert sync_res.json()["status"] == "success"
 
@@ -290,10 +293,10 @@ def test_epic5_incident_reporting_and_conflict_resolution(field_officer_token, c
         inc1 = res1.json()
         assert inc1["status"] == "pending_review"
 
-        # Road should be blocked
+        # Road should remain open (not automatically authoritative)
         db_session.expire_all()
         r1 = db_session.query(models.RoadSegment).filter_by(id=road_id).first()
-        assert r1.accessibility_state == "blocked"
+        assert r1.accessibility_state == "open"
 
         # 2. Contradictory report: road reopened
         data2 = {
@@ -324,7 +327,9 @@ def test_epic5_incident_reporting_and_conflict_resolution(field_officer_token, c
         assert r3.accessibility_state == "blocked"
     finally:
         # Restore road state so downstream tests have a healthy graph
+        # Cleanup
         db_session.query(models.RoadSegment).filter_by(id=road_id).update({"accessibility_state": "open"})
+        db_session.query(models.Incident).filter_by(road_segment_id=road_id).delete()
         db_session.commit()
 
 # =============================================================================
@@ -351,14 +356,15 @@ def test_epic6_telemetry_and_route_deviation(control_room_token, driver_token, d
         "stockout_days": 1
     }, token=control_room_token).json()
 
+    shillong_id = next(v["id"] for v in villages if "Shillong HQ" in v["name"])
     route = post("/api/v1/routes/evaluate", json={
-        "source_village_id": villages[0]["id"],
+        "source_village_id": shillong_id,
         "target_village_id": villages[1]["id"],
         "vehicle_constraints": {},
         "policy_weights": {}
     }, token=control_room_token).json()
 
-    delivery = post("/api/v1/deliveries", json={
+    disp_res = post("/api/v1/deliveries", json={
         "supply_request_id": req["id"],
         "driver_id": driver_id,
         "dispatched_quantity": 10,
@@ -369,9 +375,11 @@ def test_epic6_telemetry_and_route_deviation(control_room_token, driver_token, d
             "alternatives": route["alternatives"],
             "chosen_alternative_index": 0
         }
-    }, token=control_room_token).json()
+    }, token=control_room_token)
+    assert disp_res.status_code == 200, disp_res.text
+    delivery = disp_res.json()
     delivery_id = delivery["id"]
-
+    
     # 1. On-route GPS ping near Shillong HQ (91.8933, 25.5788)
     res_on = post(f"/api/v1/deliveries/{delivery_id}/telemetry", json={
         "delivery_id": delivery_id,
@@ -533,7 +541,7 @@ def test_epic8_full_delivery_reconciliation(control_room_token, driver_token, db
         "supply_request_id": req["id"],
         "driver_id": drivers[0]["id"],
         "dispatched_quantity": 20,
-        "route_plan": {"feasible": True}
+        "route_plan": {"feasible": True, "recommendation": {"route": {}}}
     }, token=control_room_token).json()
 
     # Submit Full POD as driver
@@ -578,7 +586,7 @@ def test_epic8_partial_delivery_creates_followup(control_room_token, driver_toke
         "supply_request_id": req["id"],
         "driver_id": drivers[0]["id"],
         "dispatched_quantity": 50,
-        "route_plan": {"feasible": True}
+        "route_plan": {"feasible": True, "recommendation": {"route": {}}}
     }, token=control_room_token).json()
 
     # Submit Partial POD with discrepancy explanation
@@ -623,7 +631,7 @@ def test_epic8_pod_negative_validations(control_room_token, driver_token):
         "supply_request_id": req["id"],
         "driver_id": drivers[0]["id"],
         "dispatched_quantity": 30,
-        "route_plan": {"feasible": True}
+        "route_plan": {"feasible": True, "recommendation": {"route": {}}}
     }, token=control_room_token).json()
     deliv_id = delivery["id"]
 

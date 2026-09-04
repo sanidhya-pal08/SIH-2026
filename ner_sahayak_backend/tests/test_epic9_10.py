@@ -29,9 +29,21 @@ def test_epic9_alerts(control_room_token: str, db_session):
     assert ack_resp.status_code == 200
     assert ack_resp.json()["status"] == "acknowledged"
     
-    # 4. Escalate Alert
+    # 3.5 Attempt unauthorized escalation
     esc_req = {"reason": "Test Escalation", "decision": "approved"}
-    esc_resp = post(f"/api/v1/alerts/{alert_id}/escalate", json=esc_req, token=control_room_token)
+    esc_resp_unauth = post(f"/api/v1/alerts/{alert_id}/escalate", json=esc_req, token=control_room_token)
+    assert esc_resp_unauth.status_code == 403
+    
+    # 4. Escalate Alert with supervisor token
+    from app import auth
+    test_user_supervisor = db_session.query(models.User).filter(models.User.role == 'supervisor').first()
+    if not test_user_supervisor:
+        test_user_supervisor = models.User(name="Sup", email="sup@nersahayak.gov.in", hashed_password="foo", role="supervisor")
+        db_session.add(test_user_supervisor)
+        db_session.commit()
+    sup_token = auth.create_access_token(data={"sub": str(test_user_supervisor.id), "role": test_user_supervisor.role})
+    
+    esc_resp = post(f"/api/v1/alerts/{alert_id}/escalate", json=esc_req, token=sup_token)
     assert esc_resp.status_code == 200
     assert esc_resp.json()["decision"] == "approved"
     

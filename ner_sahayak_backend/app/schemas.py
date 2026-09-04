@@ -11,10 +11,12 @@ class Token(BaseModel):
     user_id: UUID
 
 class UserCreate(BaseModel):
-    name: str
+    name: Optional[str] = None
+    full_name: Optional[str] = None
     email: str
     password: str
     role: str
+    phone: Optional[str] = None
     district: Optional[str] = None
 
 class UserResponse(BaseModel):
@@ -96,7 +98,7 @@ class PolicyWeights(BaseModel):
     resource: float = 1.0
 
 class RouteEvaluationRequest(BaseModel):
-    source_village_id: UUID
+    source_village_id: Optional[UUID] = None
     target_village_id: UUID
     request_id: Optional[UUID] = None
     vehicle_constraints: Optional[VehicleConstraints] = Field(default_factory=VehicleConstraints)
@@ -105,6 +107,8 @@ class RouteEvaluationRequest(BaseModel):
 class RouteEvaluationResponse(BaseModel):
     feasible: bool
     summary: str
+    reason: Optional[str] = None
+    recommended_action: Optional[str] = None
     constraints_applied: List[Dict[str, Any]]
     recommendation: Optional[Dict[str, Any]]
     alternatives: List[Dict[str, Any]]

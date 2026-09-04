@@ -107,7 +107,7 @@ def test_epic2_unauthorized_override_rejected(field_officer_token):
 # EPIC 4: Environmental Sync (run before Epic 3 to populate probabilities)
 
 def test_epic4_environmental_sync(control_room_token):
-    res = post("/api/v1/environmental/sync", token=control_room_token)
+    res = post("/api/v1/environmental/sync?use_mock=true", token=control_room_token)
     assert res.status_code == 200, res.text
     assert res.json()["status"] == "success"
 

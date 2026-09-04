@@ -46,7 +46,8 @@ def startup() -> None:
     finally:
         db.close()
 
-allow_control_room = auth.RoleChecker(["control_room"])
+allow_control_room = auth.RoleChecker(["control_room", "supervisor"])
+allow_supervisor = auth.RoleChecker(["supervisor"])
 allow_field_staff = auth.RoleChecker(["field_officer", "driver"])
 allow_driver = auth.RoleChecker(["driver"])
 
@@ -69,9 +70,18 @@ def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depend
 
 @app.post("/api/v1/auth/register", response_model=schemas.UserResponse)
 def register_user(user: schemas.UserCreate, db: Session = Depends(get_db)):
+    if user.role in ["control_room", "supervisor", "admin"]:
+        raise HTTPException(status_code=403, detail="Cannot self-register as a privileged role")
     if db.query(models.User).filter(models.User.email == user.email).first():
         raise HTTPException(status_code=400, detail="Email already registered")
-    new_user = models.User(**user.model_dump(exclude={"password"}), hashed_password=auth.get_password_hash(user.password))
+    name = user.name or user.full_name or user.email.split("@")[0]
+    new_user = models.User(
+        name=name,
+        email=user.email,
+        role=user.role,
+        district=user.district,
+        hashed_password=auth.get_password_hash(user.password)
+    )
     db.add(new_user)
     db.commit()
     db.refresh(new_user)
@@ -138,7 +148,7 @@ def override_supply_request(request_id: UUID, req: schemas.PriorityOverrideReque
 @app.get("/api/v1/requests", response_model=List[schemas.SupplyRequestResponse])
 def list_supply_requests(skip: int = 0, limit: int = 100, db: Session = Depends(get_db), current_user: models.User = Depends(auth.get_current_user)):
     query = db.query(models.SupplyRequest)
-    if current_user.role != 'control_room':
+    if current_user.role not in ['control_room', 'supervisor', 'admin']:
         query = query.filter(models.SupplyRequest.requester_id == current_user.id)
     return query.order_by(models.SupplyRequest.priority_score.desc()).offset(skip).limit(limit).all()
 
@@ -209,17 +219,11 @@ def report_incident(
             
         states = set([implied_state(i.incident_type, i.severity) for i in active_incidents])
         
+        # If pending incidents conflict with each other, mark disputed
         if len(states) > 1:
             db_road.accessibility_state = 'disputed'
-        else:
-            new_implied = implied_state(incident_type, severity)
-            if new_implied == 'blocked' and db_road.accessibility_state != 'blocked':
-                db_road.accessibility_state = 'blocked'
-            elif new_implied == 'open' and db_road.accessibility_state != 'open':
-                db_road.accessibility_state = 'open'
-                
-        db_road.last_updated = datetime.utcnow()
-
+            db_road.last_updated = datetime.utcnow()
+        # Else: do not auto-verify, leave state as is until CR verifies
     db.commit()
     db.refresh(db_incident)
     return db_incident
@@ -242,6 +246,15 @@ def verify_incident(
     
     db_road = db.query(models.RoadSegment).filter(models.RoadSegment.id == incident.road_segment_id).first()
     if db_road:
+        # Conflict set resolution: Mark other pending incidents on this road as rejected
+        conflicting_incidents = db.query(models.Incident).filter(
+            models.Incident.road_segment_id == incident.road_segment_id,
+            models.Incident.status == 'pending_review',
+            models.Incident.id != incident.id
+        ).all()
+        for ci in conflicting_incidents:
+            ci.status = 'rejected'
+            
         db_road.accessibility_state = req.verified_state
         db_road.last_updated = datetime.utcnow()
         
@@ -268,14 +281,23 @@ def verify_incident(
     return {"status": "success", "verified_state": req.verified_state}
 
 @app.get("/api/v1/incidents", response_model=List[schemas.IncidentResponse])
-def get_incidents(db: Session = Depends(get_db)):
+def get_incidents(db: Session = Depends(get_db), current_user: models.User = Depends(auth.get_current_user)):
     return db.query(models.Incident).all()
 
 @app.get("/api/v1/deliveries/active", response_model=List[schemas.DeliveryResponse])
-def get_active_deliveries(db: Session = Depends(get_db), current_user: models.User = Depends(allow_control_room)):
-    return db.query(models.Delivery).filter(
+def get_active_deliveries(db: Session = Depends(get_db), current_user: models.User = Depends(auth.get_current_user)):
+    query = db.query(models.Delivery).filter(
         models.Delivery.status.in_(['dispatched', 'requires_reroute'])
-    ).all()
+    )
+    if current_user.role in ['control_room', 'supervisor', 'admin']:
+        pass
+    elif current_user.role == 'driver':
+        query = query.filter(models.Delivery.driver_id == current_user.id)
+    elif current_user.role == 'village_rep':
+        query = query.join(models.SupplyRequest).filter(models.SupplyRequest.requester_id == current_user.id)
+    else:
+        return []
+    return query.all()
 
 @app.post("/api/v1/deliveries/{delivery_id}/telemetry", response_model=schemas.TelemetryResponse)
 def submit_telemetry(
@@ -370,9 +392,16 @@ def submit_telemetry(
 
 @app.post("/api/v1/routes/evaluate", response_model=schemas.RouteEvaluationResponse)
 def evaluate_route(req: schemas.RouteEvaluationRequest, db: Session = Depends(get_db), current_user: models.User = Depends(allow_control_room)):
+    source_id = req.source_village_id
+    if not source_id:
+        hq = db.query(models.Village).filter(models.Village.is_handoff == True).first()
+        if not hq:
+            raise HTTPException(status_code=400, detail="No source provided and no default depot available.")
+        source_id = hq.id
+
     rationale = routing_service.evaluate_routes(
         db=db,
-        source_id=str(req.source_village_id),
+        source_id=str(source_id),
         target_id=str(req.target_village_id),
         vehicle_constraints=req.vehicle_constraints,
         policy_weights=req.policy_weights
@@ -383,7 +412,7 @@ def evaluate_route(req: schemas.RouteEvaluationRequest, db: Session = Depends(ge
     audit_service.log_event(
         db=db,
         event_type="RouteEvaluated",
-        payload={"source": str(req.source_village_id), "target": str(req.target_village_id), "feasible": rationale.get("feasible")},
+        payload={"source": str(source_id), "target": str(req.target_village_id), "feasible": rationale.get("feasible")},
         actor_id=current_user.id,
         correlation_id=req.request_id
     )
@@ -417,10 +446,30 @@ def dispatch_delivery(req: schemas.DeliveryCreate, db: Session = Depends(get_db)
     if not req.route_plan or not req.route_plan.get("feasible"):
         raise HTTPException(status_code=400, detail="Cannot dispatch without a feasible route plan.")
         
+    chosen_index = req.route_plan.get("chosen_alternative_index", 0)
+    recommendation = req.route_plan.get("recommendation")
+    alternatives = req.route_plan.get("alternatives", [])
+    
+    all_routes = []
+    if recommendation and "route" in recommendation:
+        all_routes.append(recommendation["route"])
+    all_routes.extend(alternatives)
+    
+    if not all_routes or chosen_index >= len(all_routes) or chosen_index < 0:
+        raise HTTPException(status_code=400, detail="Invalid chosen alternative index.")
+        
+    chosen_route = all_routes[chosen_index]
+    normalized_route_plan = {
+        "feasible": True,
+        "summary": req.route_plan.get("summary", ""),
+        "constraints_applied": req.route_plan.get("constraints_applied", []),
+        "recommendation": {"route": chosen_route}
+    }
+        
     db_delivery = models.Delivery(
         supply_request_id=req.supply_request_id,
         driver_id=req.driver_id,
-        route_plan=req.route_plan,
+        route_plan=normalized_route_plan,
         dispatched_quantity=req.dispatched_quantity if req.dispatched_quantity is not None else db_req.quantity,
         status="dispatched"
     )
@@ -428,7 +477,7 @@ def dispatch_delivery(req: schemas.DeliveryCreate, db: Session = Depends(get_db)
     db_req.status = 'assigned'
     db.flush()
     
-    db.add(models.EventLog(event_type="DispatchApproved", actor_id=current_user.id, correlation_id=db_delivery.id, payload=jsonable_encoder(req.route_plan)))
+    db.add(models.EventLog(event_type="DispatchApproved", actor_id=current_user.id, correlation_id=db_delivery.id, payload=jsonable_encoder(normalized_route_plan)))
     db.commit()
     db.refresh(db_delivery)
     return db_delivery
@@ -471,15 +520,24 @@ def get_roads_geojson(db: Session = Depends(get_db)):
     return {"type": "FeatureCollection", "features": features}
 
 @app.post("/api/v1/environmental/sync")
-def sync_environmental(db: Session = Depends(get_db), current_user: models.User = Depends(allow_control_room)):
-    environmental_service.sync_environmental_data(db)
+def sync_environmental(use_mock: bool = False, db: Session = Depends(get_db), current_user: models.User = Depends(allow_control_room)):
+    is_mock = use_mock or (os.getenv("USE_MOCK_ENV_DATA") == "1")
+    environmental_service.sync_environmental_data(db, use_mock=is_mock)
     prediction_service.update_disruption_predictions(db)
     return {"status": "success", "message": "Environmental data synced and disruption risk updated"}
 
-@app.get("/api/v1/deliveries")
-def get_deliveries(db: Session = Depends(get_db)):
-    # Drivers see all active deliveries for simplicity in MVP
-    return db.query(models.Delivery).order_by(models.Delivery.created_at.desc()).all()
+@app.get("/api/v1/deliveries", response_model=List[schemas.DeliveryResponse])
+def get_deliveries(db: Session = Depends(get_db), current_user: models.User = Depends(auth.get_current_user)):
+    query = db.query(models.Delivery)
+    if current_user.role in ['control_room', 'supervisor', 'admin']:
+        pass
+    elif current_user.role == 'driver':
+        query = query.filter(models.Delivery.driver_id == current_user.id)
+    elif current_user.role == 'village_rep':
+        query = query.join(models.SupplyRequest).filter(models.SupplyRequest.requester_id == current_user.id)
+    else:
+        return []
+    return query.order_by(models.Delivery.created_at.desc()).all()
 
 @app.put("/api/v1/deliveries/{delivery_id}/pod", response_model=schemas.DeliveryResponse)
 def submit_proof_of_delivery(
@@ -513,6 +571,18 @@ def submit_proof_of_delivery(
         receiver_contact=receiver_contact,
         pod_notes=pod_notes
     )
+
+    delivery = db.query(models.Delivery).filter(models.Delivery.id == delivery_id).first()
+    if not delivery:
+        raise HTTPException(status_code=404, detail="Delivery not found")
+        
+    if current_user.role == 'driver' and delivery.driver_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Not authorized to submit POD for this delivery")
+    
+    if current_user.role == 'village_rep':
+        req_db = db.query(models.SupplyRequest).filter(models.SupplyRequest.id == delivery.supply_request_id).first()
+        if not req_db or req_db.requester_id != current_user.id:
+            raise HTTPException(status_code=403, detail="Not authorized to submit POD for this delivery")
 
     db_delivery = delivery_service.reconcile_delivery(db, delivery_id, pod_data, current_user.id, evidence_url)
     db.commit()
@@ -697,14 +767,16 @@ def _sync_incident_create(db, current_user, action: schemas.SyncActionItem) -> s
         new_state = implied_state(incident_type, severity)
         result_status = 'accepted'
 
-        if len(states) > 1 or (len(states) == 1 and list(states)[0] != new_state):
+        # If pending incidents conflict with each other, mark disputed
+        if len(states) > 1:
             db_road.accessibility_state = 'disputed'
             result_status = 'conflict'
+        elif len(states) == 1 and list(states)[0] != db_road.accessibility_state:
+            # It conflicts with current state, but is the only pending report.
+            # Do NOT update the state (no auto-verify), but return 'accepted' since the action itself is accepted.
+            result_status = 'accepted'
         else:
-            if new_state == 'blocked':
-                db_road.accessibility_state = 'blocked'
-            elif new_state == 'open':
-                db_road.accessibility_state = 'open'
+            result_status = 'accepted'
 
         db_road.last_updated = datetime.utcnow()
     else:
@@ -745,8 +817,8 @@ def _sync_telemetry_create(db, current_user, action: schemas.SyncActionItem) -> 
             status='rejected', detail='Delivery not found'
         )
 
-    # Authorization: must be control_room OR the assigned driver
-    if current_user.role != 'control_room' and (
+    # Authorization: must be privileged OR the assigned driver
+    if current_user.role not in ['control_room', 'supervisor', 'admin'] and (
         current_user.role != 'driver' or delivery.driver_id != current_user.id
     ):
         return schemas.SyncActionResult(
@@ -820,6 +892,27 @@ def _sync_delivery_pod(db, current_user, action: schemas.SyncActionItem) -> sche
             status='validation_failed', detail='Invalid delivery_id'
         )
 
+    delivery = db.query(models.Delivery).filter(models.Delivery.id == delivery_id).first()
+    if not delivery:
+        return schemas.SyncActionResult(
+            client_action_id=action.client_action_id,
+            status='rejected', detail='Delivery not found'
+        )
+        
+    if current_user.role == 'driver' and delivery.driver_id != current_user.id:
+        return schemas.SyncActionResult(
+            client_action_id=action.client_action_id,
+            status='authorization_failed', detail='Not authorized to submit POD for this delivery'
+        )
+        
+    if current_user.role == 'village_rep':
+        req_db = db.query(models.SupplyRequest).filter(models.SupplyRequest.id == delivery.supply_request_id).first()
+        if not req_db or req_db.requester_id != current_user.id:
+            return schemas.SyncActionResult(
+                client_action_id=action.client_action_id,
+                status='authorization_failed', detail='Not authorized to submit POD for this delivery'
+            )
+
     pod_data = schemas.ProofOfDelivery(
         received_quantity=p['received_quantity'],
         condition_status=p['condition_status'],
@@ -862,7 +955,7 @@ def ack_alert(alert_id: UUID, db: Session = Depends(get_db), current_user: model
     return alert
 
 @app.post("/api/v1/alerts/{alert_id}/escalate", response_model=schemas.AirEscalationResponse)
-def escalate_alert(alert_id: UUID, req: schemas.AirEscalationCreate, db: Session = Depends(get_db), current_user: models.User = Depends(allow_control_room)):
+def escalate_alert(alert_id: UUID, req: schemas.AirEscalationCreate, db: Session = Depends(get_db), current_user: models.User = Depends(allow_supervisor)):
     alert = db.query(models.Alert).filter(models.Alert.id == alert_id).first()
     if not alert or not alert.related_request_id:
         raise HTTPException(status_code=404, detail="Alert not found or invalid")

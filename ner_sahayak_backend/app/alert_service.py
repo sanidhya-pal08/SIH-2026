@@ -12,11 +12,11 @@ def create_destination_cutoff_alert(
     """
     Creates or updates a critical alert for a destination cut-off scenario.
     """
-    # Deduplication: Check if there's an active alert for this request
+    # Deduplication: Check if there's an active or acknowledged alert for this request
     existing = db.query(Alert).filter(
         Alert.related_request_id == request_id,
         Alert.type == "destination_cut_off",
-        Alert.status == "active"
+        Alert.status.in_(["active", "acknowledged"])
     ).first()
 
     payload = {
@@ -45,12 +45,19 @@ def create_destination_cutoff_alert(
     db.refresh(alert)
     return alert
 
-def get_nearest_handoff(db: Session) -> Optional[Village]:
+def get_nearest_handoff(db: Session, target_village_id: UUID = None) -> Optional[Village]:
     """
-    Finds the first configured handoff point (hub/helipad).
-    In a real system with coordinates, this would use PostGIS ST_Distance.
-    For this hackathon, we simply pick the first available handoff point.
+    Finds the nearest configured handoff point (hub/helipad) to the target village.
+    Uses PostGIS ST_Distance.
     """
+    if target_village_id:
+        target = db.query(Village).filter(Village.id == target_village_id).first()
+        if target:
+            from sqlalchemy import func
+            return db.query(Village).filter(Village.is_handoff == True).order_by(
+                func.ST_Distance(Village.geom, target.geom)
+            ).first()
+    
     return db.query(Village).filter(Village.is_handoff == True).first()
 
 def acknowledge_alert(db: Session, alert_id: UUID, actor_id: UUID) -> Optional[Alert]:
@@ -76,13 +83,14 @@ def approve_escalation(db: Session, request_id: UUID, actor_id: UUID, reason: st
     )
     db.add(escalation)
     
-    # Resolve related active alerts
-    alerts = db.query(Alert).filter(
-        Alert.related_request_id == request_id,
-        Alert.status != "resolved"
-    ).all()
-    for alert in alerts:
-        alert.status = "resolved"
+    # Resolve related active alerts only if approved
+    if decision == "approved":
+        alerts = db.query(Alert).filter(
+            Alert.related_request_id == request_id,
+            Alert.status != "resolved"
+        ).all()
+        for alert in alerts:
+            alert.status = "resolved"
         
     db.commit()
     db.refresh(escalation)
