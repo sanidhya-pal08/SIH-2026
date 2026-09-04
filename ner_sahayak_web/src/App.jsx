@@ -7,6 +7,10 @@ import api from './api';
 import { enqueueAction, getActionsByStatus, countQueued, setCacheEntry, getCacheEntry } from './offlineDb.js';
 import { initSync, triggerSync } from './syncWorker.js';
 
+import AlertsPage from './AlertsPage.jsx';
+import AuditTimelinePage from './AuditTimelinePage.jsx';
+import { useTranslation } from './i18n.jsx';
+
 import L from 'leaflet';
 import markerIcon2x from 'leaflet/dist/images/marker-icon-2x.png';
 import markerIcon from 'leaflet/dist/images/marker-icon.png';
@@ -130,6 +134,9 @@ function Register() {
 }
 
 function Dashboard() {
+  const { lang, setLang, t } = useTranslation();
+  const [currentView, setCurrentView] = useState('dashboard');
+  
   const [requests, setRequests] = useState([]);
   const [deliveries, setDeliveries] = useState([]);
   const [roads, setRoads] = useState([]);
@@ -624,10 +631,14 @@ function Dashboard() {
     <div className="dashboard">
       <div className="sidebar">
         <div className="sidebar-header">
-          <h1>NER Sahayak</h1>
+          <h1>{t('app.title')}</h1>
           <div className="header-controls">
+            <select value={lang} onChange={e => setLang(e.target.value)} style={{ marginRight: '10px', padding: '2px' }}>
+              <option value="en">EN</option>
+              <option value="hi">HI</option>
+            </select>
             <span className="role-badge">{userRole.replace('_', ' ')}</span>
-            <button className="logout-btn" onClick={handleLogout}>Logout</button>
+            <button className="logout-btn" onClick={handleLogout}>{t('nav.logout')}</button>
           </div>
         </div>
         
@@ -661,9 +672,19 @@ function Dashboard() {
         )}
 
         <div className="sidebar-content">
-          
-          {/* VIEW: CONTROL ROOM */}
           {userRole === 'control_room' && (
+            <div style={{ display: 'flex', gap: '10px', marginBottom: '15px', borderBottom: '1px solid #e2e8f0', paddingBottom: '10px' }}>
+              <button className={currentView === 'dashboard' ? 'dispatch-btn' : 'btn-secondary'} onClick={() => setCurrentView('dashboard')}>{t('nav.dashboard')}</button>
+              <button className={currentView === 'alerts' ? 'dispatch-btn' : 'btn-secondary'} onClick={() => setCurrentView('alerts')}>{t('nav.alerts')}</button>
+              <button className={currentView === 'audit' ? 'dispatch-btn' : 'btn-secondary'} onClick={() => setCurrentView('audit')}>{t('nav.audit')}</button>
+            </div>
+          )}
+
+          {currentView === 'alerts' && userRole === 'control_room' && <AlertsPage />}
+          {currentView === 'audit' && userRole === 'control_room' && <AuditTimelinePage />}
+          
+          {/* VIEW: CONTROL ROOM (Dashboard) */}
+          {currentView === 'dashboard' && userRole === 'control_room' && (
             <>
               <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '15px'}}>
                 <h2 className="section-title" style={{margin: 0}}>Pending Requests</h2>
