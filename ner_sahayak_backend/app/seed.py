@@ -145,6 +145,7 @@ def seed_demo_graph(db: Session) -> None:
             road_segment_id=bridge_edge.id,
             reporter_id=admin.id,
             incident_type="landslide",
+            severity="critical",
             confidence_score=99.0,
             status="verified"
         )

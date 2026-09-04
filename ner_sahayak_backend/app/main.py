@@ -30,7 +30,7 @@ app.mount("/uploads", StaticFiles(directory="uploads"), name="uploads")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"], # In production, restrict this to the frontend URL
-    allow_credentials=True,
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -86,7 +86,10 @@ def get_users(role: Optional[str] = None, db: Session = Depends(get_db), current
 
 @app.post("/api/v1/requests", response_model=schemas.SupplyRequestResponse)
 def create_supply_request(req: schemas.SupplyRequestCreate, db: Session = Depends(get_db), current_user: models.User = Depends(auth.get_current_user)):
-    db_request = models.SupplyRequest(**req.model_dump())
+    req_dict = req.model_dump()
+    if not req_dict.get('requester_id'):
+        req_dict['requester_id'] = current_user.id
+    db_request = models.SupplyRequest(**req_dict)
     
     village = db.query(models.Village).filter(models.Village.id == req.village_id).first()
     pop = village.population if village else 0
@@ -133,8 +136,11 @@ def override_supply_request(request_id: UUID, req: schemas.PriorityOverrideReque
     return db_req
 
 @app.get("/api/v1/requests", response_model=List[schemas.SupplyRequestResponse])
-def list_supply_requests(skip: int = 0, limit: int = 100, db: Session = Depends(get_db), current_user: models.User = Depends(allow_control_room)):
-    return db.query(models.SupplyRequest).order_by(models.SupplyRequest.priority_score.desc()).offset(skip).limit(limit).all()
+def list_supply_requests(skip: int = 0, limit: int = 100, db: Session = Depends(get_db), current_user: models.User = Depends(auth.get_current_user)):
+    query = db.query(models.SupplyRequest)
+    if current_user.role != 'control_room':
+        query = query.filter(models.SupplyRequest.requester_id == current_user.id)
+    return query.order_by(models.SupplyRequest.priority_score.desc()).offset(skip).limit(limit).all()
 
 @app.post("/api/v1/incidents", response_model=schemas.IncidentResponse)
 def report_incident(

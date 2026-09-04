@@ -125,32 +125,31 @@ def find_k_shortest_paths(
     paths: List[Dict] = []
     try:
         gen = nx.shortest_simple_paths(graph, source, target, weight="weight")
-    except (nx.NetworkXNoPath, nx.NodeNotFound):
-        return paths
+        for i, node_list in enumerate(gen):
+            if i >= k:
+                break
 
-    for i, node_list in enumerate(gen):
-        if i >= k:
-            break
+            total_cost = 0.0
+            edge_details: List[Dict] = []
+            for a, b in zip(node_list, node_list[1:]):
+                edata = graph.edges[a, b]
+                cost_bd = edata.get("cost_breakdown", {})
+                total_cost += edata.get("weight", 0.0)
+                edge_details.append({
+                    "edge_id": edata.get("edge_id", f"{a}->{b}"),
+                    "from_node": a,
+                    "to_node": b,
+                    "cost_breakdown": cost_bd,
+                })
 
-        total_cost = 0.0
-        edge_details: List[Dict] = []
-        for a, b in zip(node_list, node_list[1:]):
-            edata = graph.edges[a, b]
-            cost_bd = edata.get("cost_breakdown", {})
-            total_cost += edata.get("weight", 0.0)
-            edge_details.append({
-                "edge_id": edata.get("edge_id", f"{a}->{b}"),
-                "from_node": a,
-                "to_node": b,
-                "cost_breakdown": cost_bd,
+            paths.append({
+                "rank": i + 1,
+                "nodes": node_list,
+                "total_cost": round(total_cost, 6),
+                "edge_details": edge_details,
             })
-
-        paths.append({
-            "rank": i + 1,
-            "nodes": node_list,
-            "total_cost": round(total_cost, 6),
-            "edge_details": edge_details,
-        })
+    except (nx.NetworkXNoPath, nx.NodeNotFound):
+        pass
 
     return paths
 

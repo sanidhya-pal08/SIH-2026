@@ -30,7 +30,7 @@ class UserResponse(BaseModel):
 # --- Supply Requests ---
 class SupplyRequestBase(BaseModel):
     village_id: UUID
-    requester_id: UUID
+    requester_id: Optional[UUID] = None
     commodity_category: str = "General"
     commodity: str
     quantity: int

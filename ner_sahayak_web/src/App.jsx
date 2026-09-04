@@ -175,13 +175,21 @@ function Dashboard() {
 
   const fetchData = async () => {
     try {
-      const reqRes = await api.get('/requests');
-      setRequests(reqRes.data);
+      try {
+        const reqRes = await api.get('/requests');
+        setRequests(reqRes.data);
+      } catch (e) {
+        console.warn("Could not fetch requests", e);
+      }
       
-      const villRes = await api.get('/villages');
-      const villObj = {};
-      villRes.data.forEach(v => { villObj[v.id] = { name: v.name, coords: v.coords, id: v.id }; });
-      setVillages(villObj);
+      try {
+        const villRes = await api.get('/villages');
+        const villObj = {};
+        villRes.data.forEach(v => { villObj[v.id] = { name: v.name, coords: v.coords, id: v.id }; });
+        setVillages(villObj);
+      } catch (e) {
+        console.warn("Could not fetch villages", e);
+      }
       
       try {
         const geoRes = await api.get('/roads/geojson');
@@ -191,15 +199,25 @@ function Dashboard() {
       }
 
       if (userRole === 'field_officer') {
-        const roadRes = await api.get('/roads');
-        setRoads(roadRes.data);
+        try {
+          const roadRes = await api.get('/roads');
+          setRoads(roadRes.data);
+        } catch (e) {
+          console.warn("Could not fetch roads", e);
+        }
       }
       
       if (userRole === 'driver') {
-        const delRes = await api.get('/deliveries');
-        setDeliveries(delRes.data);
-        // Cache delivery data for offline use
-        await setCacheEntry('my_deliveries', delRes.data).catch(() => {});
+        try {
+          const delRes = await api.get('/deliveries');
+          setDeliveries(delRes.data);
+          // Cache delivery data for offline use
+          await setCacheEntry('my_deliveries', delRes.data).catch(() => {});
+        } catch (e) {
+          console.warn("Could not fetch deliveries", e);
+          const cached = await getCacheEntry('my_deliveries').catch(() => null);
+          if (cached) setDeliveries(cached.data);
+        }
       }
 
       if (userRole === 'control_room') {
@@ -223,12 +241,7 @@ function Dashboard() {
         }
       }
     } catch (err) {
-      console.error("Fetch failed — trying cache", err);
-      // Fall back to cached operational data when offline
-      if (userRole === 'driver') {
-        const cached = await getCacheEntry('my_deliveries').catch(() => null);
-        if (cached) setDeliveries(cached.data);
-      }
+      console.error("Fetch failed", err);
     }
   };
 
