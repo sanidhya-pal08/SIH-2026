@@ -50,5 +50,14 @@ test_bridge_failure.json
 test_wait_reroute.json
 test_regression.py
 
-*.db
+# ─── BMAD, AI Agents & Skills ─────────────────────────────
+_bmad/
+_bmad-output/
+.bmad/
 .agent/
+.agents/
+.claude/
+.github/agents/
+**/skills/
+test-design/
+test-reviews/
