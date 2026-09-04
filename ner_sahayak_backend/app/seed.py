@@ -99,7 +99,17 @@ def seed_demo_graph(db: Session) -> None:
         name="Dr. Khongwir (Sohra Hospital)", role="village_rep", district="East Khasi Hills",
         email="hospital@nersahayak.gov.in", hashed_password=get_password_hash("hospital123")
     )
-    db.add_all([admin, driver, village_rep])
+    # Test Accounts for QA Suite
+    test_officer = models.User(
+        name="Test Control Room Officer", role="control_room", district="East Khasi Hills",
+        email="officer@nersahayak.gov.in", hashed_password=get_password_hash("password123")
+    )
+    test_fo = models.User(
+        name="Test Field Officer", role="field_officer", district="East Khasi Hills",
+        email="fo@nersahayak.gov.in", hashed_password=get_password_hash("password123")
+    )
+    
+    db.add_all([admin, driver, village_rep, test_officer, test_fo])
     db.commit()
 
     # 3. Create a Golden Demo Supply Request

@@ -33,6 +33,7 @@ def build_graph(nodes: List[Village], edges: List[RoadSegment]) -> nx.DiGraph:
                 max_vehicle_height_m=getattr(e, "max_vehicle_height_m", None),
                 allows_hazmat=e.allows_hazmat,
                 accessibility_state=e.accessibility_state,
+                disruption_probability=e.disruption_probability,
             )
 
     return G
@@ -90,7 +91,11 @@ def apply_policy_weights(
 ) -> nx.DiGraph:
     for _u, _v, data in graph.edges(data=True):
         delay_cost = data.get("base_travel_time_min", 0.0) * w_delay
-        risk_cost = data.get("risk_level", 0.0) * w_risk
+        
+        # Inject Epic 4: P^2 penalty
+        p_disruption = data.get("disruption_probability") or 0.0
+        risk_cost = (data.get("risk_level", 0.0) + (p_disruption ** 2) * 60) * w_risk
+        
         failure_cost = data.get("failure_probability", 0.0) * w_failure
         resource_cost = data.get("resource_cost", 0.0) * w_resource
 
@@ -101,7 +106,9 @@ def apply_policy_weights(
             "failure_cost": round(failure_cost, 6),
             "resource_cost": round(resource_cost, 6),
             "total": round(total, 6),
+            "disruption_probability": round(p_disruption, 4)
         }
+        data["weight"] = total
         data["weight"] = total
 
     return graph
@@ -172,12 +179,46 @@ def build_rationale(paths: List[Dict], pruned_log: List[Dict], confidence: float
 
     best = paths[0]
     alternatives = paths[1:]
-    summary_parts = [f"Recommended route (rank 1) traverses {len(best['nodes'])} nodes with a cost of {best['total_cost']:.4f}."]
+    
+    # Epic 4: Check if any high risk in best route
+    high_risk_edge = None
+    for ed in best.get("edge_details", []):
+        p = ed.get("cost_breakdown", {}).get("disruption_probability", 0.0)
+        if p > 0.70:
+            high_risk_edge = ed
+            break
+            
+    if high_risk_edge:
+        summary_parts = [
+            f"Primary route traverses {len(best['nodes'])} nodes but contains HIGH RISK corridor (Edge {high_risk_edge['edge_id']}) "
+            f"with disruption probability {high_risk_edge['cost_breakdown']['disruption_probability']:.1%}."
+        ]
+        
+        # Inject wait window alternative
+        wait_window_alt = {
+            "rank": "Wait-Window",
+            "nodes": best["nodes"],
+            "total_cost": "N/A (Wait 6h for rainfall cessation)",
+            "edge_details": best["edge_details"],
+            "is_wait_window": True
+        }
+        
+        # if we have alternatives, we can detour
+        if alternatives:
+            summary_parts.append(
+                f"Diverting via Rank {alternatives[0]['rank']} increases travel cost to {alternatives[0]['total_cost']:.2f} but avoids the high-risk zone."
+            )
+        
+        alternatives.insert(0, wait_window_alt)
+        
+    else:
+        summary_parts = [f"Recommended route (rank 1) traverses {len(best['nodes'])} nodes with a cost of {best['total_cost']:.4f}."]
+    
     if pruned_log:
         summary_parts.append(f"{len(pruned_log)} edge(s) were removed due to hard constraints.")
-    if alternatives:
+    if alternatives and not high_risk_edge:
         summary_parts.append(f"{len(alternatives)} alternative route(s) available. Confidence: {confidence:.2%}.")
-    else:
+    elif not alternatives:
         summary_parts.append("No alternative routes available.")
 
     return {

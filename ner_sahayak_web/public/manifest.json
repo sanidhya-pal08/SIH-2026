@@ -1,0 +1,17 @@
+{
+  "name": "NER Sahayak",
+  "short_name": "NER Sahayak",
+  "description": "Northeast Relief Logistics Platform — offline-capable field operations",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#0f172a",
+  "theme_color": "#2563eb",
+  "icons": [
+    {
+      "src": "/favicon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

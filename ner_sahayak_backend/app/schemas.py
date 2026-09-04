@@ -47,6 +47,8 @@ class SupplyRequestResponse(SupplyRequestBase):
     is_overridden: bool = False
     override_reason: Optional[str] = None
     status: str
+    fulfilled_quantity: int = 0
+    parent_request_id: Optional[UUID] = None
     created_at: datetime
 
     class Config:
@@ -61,6 +63,8 @@ class IncidentBase(BaseModel):
     road_segment_id: UUID
     reporter_id: UUID
     incident_type: str
+    severity: str
+    description: Optional[str] = None
     evidence_url: Optional[str] = None
     
 class IncidentCreate(IncidentBase):
@@ -74,6 +78,10 @@ class IncidentResponse(IncidentBase):
 
     class Config:
         from_attributes = True
+
+class IncidentVerifyRequest(BaseModel):
+    verified_state: str
+    verification_note: str
 
 # --- Routing Engine Additions ---
 class VehicleConstraints(BaseModel):
@@ -107,23 +115,57 @@ class DeliveryBase(BaseModel):
     route_plan: Dict[str, Any]
 
 class DeliveryCreate(DeliveryBase):
-    pass
+    dispatched_quantity: Optional[int] = None
 
 class DeliveryResponse(BaseModel):
     id: UUID
     supply_request_id: UUID
     driver_id: UUID
     status: str
+    
+    dispatched_quantity: int
+    received_quantity: Optional[int] = None
+    condition_status: Optional[str] = None
+    discrepancy_reason: Optional[str] = None
+    receiver_name: Optional[str] = None
+    receiver_contact: Optional[str] = None
+    pod_evidence_url: Optional[str] = None
+    
     pod_notes: Optional[str] = None
     route_plan: Dict[str, Any] # Full rationale and path chosen
     created_at: datetime
     delivered_at: Optional[datetime] = None
+    last_known_lat: Optional[float] = None
+    last_known_lng: Optional[float] = None
+    last_ping_at: Optional[datetime] = None
+    deviation_status: Optional[str] = None
 
     class Config:
         from_attributes = True
 
 class ProofOfDelivery(BaseModel):
-    pod_notes: str
+    received_quantity: int
+    condition_status: str
+    discrepancy_reason: Optional[str] = None
+    receiver_name: Optional[str] = None
+    receiver_contact: Optional[str] = None
+    pod_notes: Optional[str] = None
+
+class TelemetryCreate(BaseModel):
+    source_type: str
+    latitude: float
+    longitude: float
+    speed_kmh: Optional[float] = None
+    battery_level: Optional[int] = Field(None, ge=0, le=100)
+    checkpoint_name: Optional[str] = None
+    captured_at: Optional[datetime] = None
+
+class TelemetryResponse(TelemetryCreate):
+    id: UUID
+    delivery_id: UUID
+    server_received_at: datetime
+    class Config:
+        from_attributes = True
 
 # --- Event Log ---
 class EventLogCreate(BaseModel):
@@ -165,3 +207,28 @@ class RoadSegmentResponse(BaseModel):
     class Config:
         from_attributes = True
 
+
+# --- EPIC-07: Offline Sync ---
+
+class SyncActionItem(BaseModel):
+    client_action_id: UUID
+    action_type: str   # 'incident.create' | 'telemetry.create' | 'delivery.pod'
+    entity_type: str   # 'incident' | 'telemetry' | 'delivery'
+    payload: Dict[str, Any]
+    occurred_at: Optional[datetime] = None  # client-captured timestamp
+
+class SyncBatchRequest(BaseModel):
+    client_id: UUID           # stable device/browser ID
+    sync_batch_id: UUID       # unique ID for this specific batch attempt
+    actions: List[SyncActionItem] = Field(..., max_length=50)  # cap batch size
+
+class SyncActionResult(BaseModel):
+    client_action_id: UUID
+    status: str               # accepted | duplicate | rejected | conflict | validation_failed | authorization_failed
+    server_entity_id: Optional[UUID] = None
+    detail: Optional[str] = None
+
+class SyncBatchResponse(BaseModel):
+    sync_batch_id: UUID
+    processed_count: int
+    results: List[SyncActionResult]
