@@ -62,6 +62,14 @@ def evaluate_routes(db: Session, source_id: str, target_id: str, vehicle_constra
     if not paths:
         rationale["feasible"] = False
         rationale["summary"] = "No safe road route available. Escalate to Air Delivery or Reachable Hub Handoff."
+        # EPIC-09 Alert generation for critical requests
+        from . import alert_service
+        # Find nearest handoff
+        handoff = alert_service.get_nearest_handoff(db)
+        if handoff:
+            rationale["summary"] += f" Nearest approved handoff: {handoff.name}."
+            rationale["handoff_village_id"] = str(handoff.id)
+            rationale["handoff_village_name"] = handoff.name
     else:
         rationale["feasible"] = True
         

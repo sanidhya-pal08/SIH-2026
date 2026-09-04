@@ -54,6 +54,7 @@ class Village(Base):
     geom = Column(Geometry('POINT', srid=4326))
     population = Column(Integer)
     isolation_score = Column(Float, default=0.0)
+    is_handoff = Column(Boolean, default=False)
 
 class Incident(Base):
     __tablename__ = "incidents"
@@ -134,6 +135,8 @@ class EventLog(Base):
     actor_id = Column(UUID(as_uuid=True))
     correlation_id = Column(UUID(as_uuid=True))
     payload = Column(JSON, nullable=False)
+    checksum = Column(String(64), nullable=True)
+    previous_hash = Column(String(64), nullable=True)
     occurred_at = Column(DateTime(timezone=True), default=datetime.utcnow)
     received_at = Column(DateTime(timezone=True), default=datetime.utcnow)
 
@@ -148,4 +151,29 @@ class ProcessedSyncAction(Base):
     server_entity_id = Column(UUID(as_uuid=True), nullable=True)  # ID of the created server entity
     occurred_at = Column(DateTime(timezone=True), nullable=True)   # client-captured time
     processed_at = Column(DateTime(timezone=True), default=datetime.utcnow)
+
+
+class Alert(Base):
+    __tablename__ = "alerts"
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    type = Column(String(100), nullable=False)
+    severity = Column(String(50), nullable=False)
+    title = Column(String, nullable=False)
+    message = Column(String, nullable=False)
+    related_request_id = Column(UUID(as_uuid=True), ForeignKey('supply_requests.id'), nullable=True)
+    related_delivery_id = Column(UUID(as_uuid=True), ForeignKey('deliveries.id'), nullable=True)
+    status = Column(String(50), default="active") # active, acknowledged, resolved
+    acknowledged_by = Column(UUID(as_uuid=True), ForeignKey('users.id'), nullable=True)
+    acknowledged_at = Column(DateTime(timezone=True), nullable=True)
+    recommendation_payload = Column(JSON, nullable=True)
+    created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
+
+class AirEscalation(Base):
+    __tablename__ = "air_escalations"
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    request_id = Column(UUID(as_uuid=True), ForeignKey('supply_requests.id'), nullable=False)
+    approved_by = Column(UUID(as_uuid=True), ForeignKey('users.id'), nullable=False)
+    reason = Column(String, nullable=False)
+    decision = Column(String(50), nullable=False) # approved, rejected
+    created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
 

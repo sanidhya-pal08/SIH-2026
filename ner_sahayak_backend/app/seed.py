@@ -32,8 +32,8 @@ def seed_demo_graph(db: Session) -> None:
     ids = {name: uuid.uuid5(uuid.NAMESPACE_DNS, name) for name in coords}
 
     villages = [
-        models.Village(id=ids["Shillong_HQ"], name="Shillong HQ", district="East Khasi Hills", geom=WKTElement(f'POINT({coords["Shillong_HQ"][0]} {coords["Shillong_HQ"][1]})', srid=4326), population=143229),
-        models.Village(id=ids["Upper_Shillong"], name="Upper Shillong Depot", district="East Khasi Hills", geom=WKTElement(f'POINT({coords["Upper_Shillong"][0]} {coords["Upper_Shillong"][1]})', srid=4326), population=5000),
+        models.Village(id=ids["Shillong_HQ"], name="Shillong HQ", district="East Khasi Hills", geom=WKTElement(f'POINT({coords["Shillong_HQ"][0]} {coords["Shillong_HQ"][1]})', srid=4326), population=143229, is_handoff=True),
+        models.Village(id=ids["Upper_Shillong"], name="Upper Shillong Depot", district="East Khasi Hills", geom=WKTElement(f'POINT({coords["Upper_Shillong"][0]} {coords["Upper_Shillong"][1]})', srid=4326), population=5000, is_handoff=True),
         models.Village(id=ids["Mylliem"], name="Mylliem", district="East Khasi Hills", geom=WKTElement(f'POINT({coords["Mylliem"][0]} {coords["Mylliem"][1]})', srid=4326), population=3200),
         models.Village(id=ids["Mawphlang"], name="Mawphlang", district="East Khasi Hills", geom=WKTElement(f'POINT({coords["Mawphlang"][0]} {coords["Mawphlang"][1]})', srid=4326), population=4500),
         models.Village(id=ids["Weiloi"], name="Weiloi Junction", district="East Khasi Hills", geom=WKTElement(f'POINT({coords["Weiloi"][0]} {coords["Weiloi"][1]})', srid=4326), population=1200),

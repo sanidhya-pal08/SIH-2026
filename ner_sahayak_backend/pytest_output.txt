@@ -1,0 +1,18 @@
+============================= test session starts ==============================
+platform linux -- Python 3.11.16, pytest-9.1.1, pluggy-1.6.0 -- /usr/local/bin/python3.11
+cachedir: .pytest_cache
+rootdir: /app
+plugins: anyio-3.7.1
+collecting ... collected 32 items
+
+tests/test_api_epics.py::test_epic1_health_and_auth ERROR                [  3%]
+tests/test_api_epics.py::test_epic1_get_graph_geojson ERROR              [  6%]
+tests/test_api_epics.py::test_epic1_get_villages ERROR                   [  9%]
+tests/test_api_epics.py::test_epic2_create_supply_request ERROR          [ 12%]
+tests/test_api_epics.py::test_epic2_priority_override ERROR              [ 15%]
+tests/test_api_epics.py::test_epic2_unauthorized_override_rejected ERROR [ 18%]
+tests/test_api_epics.py::test_epic4_environmental_sync ERROR             [ 21%]
+tests/test_api_epics.py::test_epic4_risk_bands_populated ERROR           [ 25%]
+tests/test_api_epics.py::test_epic3_route_evaluation ERROR               [ 28%]
+tests/test_api_epics.py::test_epic3_dispatch_delivery ERROR              [ 31%]
+tests/test_db_verification.py::test_postgis_geometries_valid 

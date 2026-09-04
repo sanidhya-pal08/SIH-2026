@@ -98,6 +98,7 @@ class PolicyWeights(BaseModel):
 class RouteEvaluationRequest(BaseModel):
     source_village_id: UUID
     target_village_id: UUID
+    request_id: Optional[UUID] = None
     vehicle_constraints: Optional[VehicleConstraints] = Field(default_factory=VehicleConstraints)
     policy_weights: Optional[PolicyWeights] = Field(default_factory=PolicyWeights)
 
@@ -174,6 +175,15 @@ class EventLogCreate(BaseModel):
     correlation_id: Optional[UUID] = None
     payload: Dict[str, Any]
 
+class EventLogResponse(EventLogCreate):
+    event_id: UUID
+    occurred_at: datetime
+    checksum: Optional[str] = None
+    integrity_verified: Optional[bool] = None  # Computed on the fly
+
+    class Config:
+        from_attributes = True
+
 # --- Geospatial Entities ---
 class VillageResponse(BaseModel):
     id: UUID
@@ -232,3 +242,36 @@ class SyncBatchResponse(BaseModel):
     sync_batch_id: UUID
     processed_count: int
     results: List[SyncActionResult]
+
+
+# --- EPIC-09: Alerts & Escalation ---
+class AlertResponse(BaseModel):
+    id: UUID
+    type: str
+    severity: str
+    title: str
+    message: str
+    related_request_id: Optional[UUID] = None
+    related_delivery_id: Optional[UUID] = None
+    status: str
+    acknowledged_by: Optional[UUID] = None
+    acknowledged_at: Optional[datetime] = None
+    recommendation_payload: Optional[Dict[str, Any]] = None
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+class AirEscalationCreate(BaseModel):
+    reason: str
+    decision: str  # "approved", "rejected"
+
+class AirEscalationResponse(AirEscalationCreate):
+    id: UUID
+    request_id: UUID
+    approved_by: UUID
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+

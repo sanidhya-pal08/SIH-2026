@@ -370,13 +370,43 @@ def submit_telemetry(
 
 @app.post("/api/v1/routes/evaluate", response_model=schemas.RouteEvaluationResponse)
 def evaluate_route(req: schemas.RouteEvaluationRequest, db: Session = Depends(get_db), current_user: models.User = Depends(allow_control_room)):
-    return routing_service.evaluate_routes(
+    rationale = routing_service.evaluate_routes(
         db=db,
         source_id=str(req.source_village_id),
         target_id=str(req.target_village_id),
         vehicle_constraints=req.vehicle_constraints,
         policy_weights=req.policy_weights
     )
+
+    from . import audit_service, alert_service
+    # Epic 10: Event Log
+    audit_service.log_event(
+        db=db,
+        event_type="RouteEvaluated",
+        payload={"source": str(req.source_village_id), "target": str(req.target_village_id), "feasible": rationale.get("feasible")},
+        actor_id=current_user.id,
+        correlation_id=req.request_id
+    )
+
+    # Epic 09: Alert if cut off
+    if not rationale.get("feasible") and req.request_id:
+        req_db = db.query(models.SupplyRequest).filter(models.SupplyRequest.id == req.request_id).first()
+        if req_db and (req_db.urgency == "emergency" or req_db.priority_score > 70):
+            alert = alert_service.create_destination_cutoff_alert(
+                db=db,
+                request_id=req.request_id,
+                handoff_village_id=rationale.get("handoff_village_id"),
+                handoff_village_name=rationale.get("handoff_village_name")
+            )
+            audit_service.log_event(
+                db=db,
+                event_type="AlertCreated",
+                payload={"alert_id": str(alert.id), "alert_type": alert.type},
+                actor_id=None,
+                correlation_id=req.request_id
+            )
+
+    return rationale
 
 @app.post("/api/v1/deliveries", response_model=schemas.DeliveryResponse)
 def dispatch_delivery(req: schemas.DeliveryCreate, db: Session = Depends(get_db), current_user: models.User = Depends(allow_control_room)):
@@ -816,3 +846,63 @@ def _sync_delivery_pod(db, current_user, action: schemas.SyncActionItem) -> sche
     except HTTPException as e:
         # Re-raise so the caller wrapper catches it and marks as rejected
         raise e
+
+# --- EPIC-09: Alerts & Escalation ---
+@app.get("/api/v1/alerts", response_model=List[schemas.AlertResponse])
+def get_alerts(db: Session = Depends(get_db), current_user: models.User = Depends(allow_control_room)):
+    return db.query(models.Alert).filter(models.Alert.status == "active").all()
+
+@app.post("/api/v1/alerts/{alert_id}/acknowledge", response_model=schemas.AlertResponse)
+def ack_alert(alert_id: UUID, db: Session = Depends(get_db), current_user: models.User = Depends(allow_control_room)):
+    from . import alert_service, audit_service
+    alert = alert_service.acknowledge_alert(db, alert_id, current_user.id)
+    if not alert: 
+        raise HTTPException(status_code=404, detail="Alert not found")
+    audit_service.log_event(db, "AlertAcknowledged", {"alert_id": str(alert_id)}, current_user.id, alert.related_request_id)
+    return alert
+
+@app.post("/api/v1/alerts/{alert_id}/escalate", response_model=schemas.AirEscalationResponse)
+def escalate_alert(alert_id: UUID, req: schemas.AirEscalationCreate, db: Session = Depends(get_db), current_user: models.User = Depends(allow_control_room)):
+    alert = db.query(models.Alert).filter(models.Alert.id == alert_id).first()
+    if not alert or not alert.related_request_id:
+        raise HTTPException(status_code=404, detail="Alert not found or invalid")
+    from . import alert_service, audit_service
+    escalation = alert_service.approve_escalation(db, alert.related_request_id, current_user.id, req.reason, req.decision)
+    audit_service.log_event(db, "AirEscalationApproved" if req.decision == "approved" else "AirEscalationRejected", {"decision": req.decision, "reason": req.reason}, current_user.id, alert.related_request_id)
+    return escalation
+
+# --- EPIC-10: Audit Timeline & Export ---
+@app.get("/api/v1/audit/timeline/{correlation_id}", response_model=List[schemas.EventLogResponse])
+def get_audit_timeline(correlation_id: UUID, db: Session = Depends(get_db), current_user: models.User = Depends(allow_control_room)):
+    from . import audit_service
+    is_valid, events = audit_service.verify_chain(db, correlation_id)
+    results = []
+    for e in events:
+        schema = schemas.EventLogResponse.model_validate(e)
+        schema.integrity_verified = is_valid
+        results.append(schema)
+    return results
+
+@app.get("/api/v1/audit/export")
+def export_audit_csv(correlation_id: Optional[UUID] = None, db: Session = Depends(get_db), current_user: models.User = Depends(allow_control_room)):
+    from fastapi.responses import PlainTextResponse
+    import csv, io
+    query = db.query(models.EventLog).order_by(models.EventLog.occurred_at.asc())
+    if correlation_id:
+        query = query.filter(models.EventLog.correlation_id == correlation_id)
+    events = query.all()
+    
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow(["Time", "Event Type", "Actor ID", "Correlation ID", "Payload", "Integrity Status"])
+    
+    for e in events:
+        writer.writerow([
+            e.occurred_at.isoformat(),
+            e.event_type,
+            str(e.actor_id) if e.actor_id else "",
+            str(e.correlation_id) if e.correlation_id else "",
+            json.dumps(e.payload),
+            "Verified" if e.checksum else "Unknown"
+        ])
+    return PlainTextResponse(output.getvalue(), media_type="text/csv", headers={"Content-Disposition": "attachment; filename=audit_export.csv"})
